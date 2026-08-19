@@ -17,6 +17,10 @@ class Spec(BaseModel):
     """方案（Spec）
 
     必填字段见 MVP-门禁降级矩阵 §0.1。
+    v0.3.3 思维字段（宽松默认,可选）:
+      assumptions  第一性原理: 底层假设清单
+      premortem    逆向思维:   事前验尸——"这个方案最可能怎么失败"
+      tradeoff     损益思维:   决策时放弃了什么(机会成本)
     """
     id: str = Field(..., description="Spec ID，如 20260819-pipeline-batch-retry")
     title: str = Field(..., min_length=1)
@@ -28,6 +32,20 @@ class Spec(BaseModel):
     affected_modules: list[str] = Field(default_factory=list)
     contracts: list = Field(default_factory=list)
     status: SpecStatus = Field(default=SpecStatus.DRAFT)
+
+    # v0.3.3 思维字段（全部可选,宽松默认,有值才检查）
+    assumptions: list[str] = Field(
+        default_factory=list,
+        description="第一性原理: 底层事实/假设清单,goals 应基于这些",
+    )
+    premortem: list[str] = Field(
+        default_factory=list,
+        description="逆向思维: 事前验尸——这个方案最可能怎么失败",
+    )
+    tradeoff: Optional[str] = Field(
+        default=None,
+        description="损益思维: 决策时放弃了什么(机会成本记录)",
+    )
 
     @field_validator("goals")
     @classmethod

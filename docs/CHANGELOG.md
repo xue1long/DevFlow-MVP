@@ -4,6 +4,51 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [v0.3.3] - 2026-08-19（思维模型落地）
+
+> **来源**：用户需求——"项目吸收思维模型,应用到实际工作"。将 9 种职场思维变成引擎的**默认规则**(字段 + 检查),而非依赖 agent 自觉。
+> **原则**：宽松默认(字段可选,有值才检查,MINOR 提示不阻断)；不碰哈希链/账本 schema/状态机阶段。
+
+### Added（新增）
+- **思维模型字段**（全部可选,宽松默认）：
+  - `Spec.assumptions` — 第一性原理:底层假设清单
+  - `Spec.premortem` — 逆向思维:事前验尸(方案最可能怎么失败)
+  - `Spec.tradeoff` — 损益思维:决策放弃了什么(机会成本)
+  - `Task.priority` — 二八法则:P0/P1/P2(默认 P1)
+  - `Task.owner_skill` — 能力圈:擅长标注;learn/collab 表示圈外
+  - `Plan.buffer` — 冗余思维:缓冲比例(0-1),资源不排满
+- **思维检查规则 9 条**（review Spec 轴自动执行,MINOR 提示不阻断）：
+  - `thinking_first_principles` — 未声明 assumptions 时提示
+  - `thinking_premortem` — 未做事前验尸时提示
+  - `thinking_tradeoff_decision` / `thinking_tradeoff_tradeoff` — 有 options 无 decision/tradeoff 时提示
+  - `thinking_occam` — 多 options 时提示确认最简方案
+  - `thinking_hypothesis` — assumptions 声明后提示制定验证计划
+  - `thinking_pareto` — 无 P0 或 P0 未完成时提示(80/20)
+  - `thinking_capability_circle` — 圈外任务(learn/collab)提示协作
+  - `thinking_feedback_loop` — 任务缺验收标准时提示小步反馈
+  - `thinking_redundancy` — 计划未预留 buffer 时提示
+- **`sop.yaml` 新增 `thinking:` 配置段**：
+  ```yaml
+  thinking:
+    enabled: true     # false 时完全跳过思维检查(兼容旧 SOP)
+    severity: "minor" # minor | off
+  ```
+- 新增 `tests/test_thinking_rules.py`（9 条验证测试）
+
+### Changed（变更）
+- `SOPConfig` 新增 `ThinkingConfig` 模型（enabled/severity）
+- `ReviewEngine._run_spec_checks` 在 Spec 轴检查后追加思维检查（`_run_thinking_checks`）
+
+### Fixed（修复）
+- `Plan` 模型缺 `Optional` 导入（加 buffer 字段时暴露）
+
+### Notes
+- 9 项思维检查全部 severity=MINOR,不阻断推进（灰度思维：可行解优先）
+- `thinking.enabled: false` 可完全关闭（兼容旧 SOP）
+- 详见 [`docs/thinking-framework-mapping.md`](./thinking-framework-mapping.md)
+
+---
+
 ## [v0.3.2] - 2026-08-19（轻量修补）
 
 > **来源**：第 6 轮审计（v0.4 RFC 预审）保留的 4 项低风险修补。v0.4 大重构（账本 schema 演进 / 接口拆分）暂停，等真正需求。

@@ -44,6 +44,16 @@ class RedLineConfig(BaseModel):
     mvp_skip: bool = False
 
 
+class ThinkingConfig(BaseModel):
+    """v0.3.3 思维模型配置
+
+    宽松默认: 所有检查 severity=MINOR,提示不阻断。
+    enabled=false 时完全跳过思维检查(兼容旧 SOP)。
+    """
+    enabled: bool = True
+    severity: str = "minor"  # minor | off(off = 只记录不提示)
+
+
 class SOPConfig(BaseModel):
     """sop.yaml 完整配置"""
     sop_version: Optional[str] = None
@@ -61,6 +71,7 @@ class SOPConfig(BaseModel):
     adapters: dict[str, Any] = Field(default_factory=dict)
     storage: dict[str, Any] = Field(default_factory=dict)
     allow_fast_forward: bool = False
+    thinking: ThinkingConfig = Field(default_factory=ThinkingConfig)
 
     def get_gate(self, name: str) -> Optional[GateConfig]:
         return self.gates.get(name)

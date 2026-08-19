@@ -537,6 +537,15 @@ class ReviewEngine:
                 message=f"Spec 有 {placeholder_goals} 个占位 goal（待补充），建议补充完整",
             ))
 
+        # v0.3.3: 思维模型检查(9 项,宽松默认: 有值才检查,MINOR 提示不阻断)
+        thinking_cfg = getattr(self.config, "thinking", None)
+        if thinking_cfg is None or thinking_cfg.enabled:
+            thinking_violations = self._run_thinking_checks(spec_data, plan_data)
+            for tv in thinking_violations:
+                idx += 1
+                tv.id = f"SP-{idx}"
+                violations.append(tv)
+
         verdict = ReviewVerdict.FAIL if any(
             v.severity == ViolationSeverity.FATAL for v in violations
         ) else (
@@ -545,6 +554,158 @@ class ReviewEngine:
             ) else ReviewVerdict.PASS
         )
         return AxeReview(verdict=verdict, violations=violations)
+
+    def _run_thinking_checks(self, spec_data: dict, plan_data: dict) -> list[ReviewViolation]:
+        """v0.3.3 思维模型落地检查(9 项,宽松默认)
+
+        每个思维 → 一个可选字段 + 一条 MINOR 检查规则。
+        字段缺失不报错(宽松),有值但不符合规范才提示。
+        所有提示 severity=MINOR,不阻断推进。
+        """
+        violations: list[ReviewViolation] = []
+
+        def _add(rule: str, message: str) -> None:
+            violations.append(ReviewViolation(
+                id="TMP",  # 调用方会重编号
+                axis="spec",
+                rule=rule,
+                severity=ViolationSeverity.MINOR,
+                message=message,
+            ))
+
+        # --- WHY 维度 ---
+
+        # 1. 第一性原理: goals 应基于底层假设;若声明了 assumptions 则检查每个 goal 可追溯
+        assumptions = spec_data.get("assumptions", [])
+        if not assumptions:
+            _add(
+                "thinking_first_principles",
+                "第一性原理: 未声明 assumptions(底层假设清单)。建议列出 goals 依赖的底层事实,"
+                "避免基于经验惯性推导。",
+            )
+        else:
+            # 宽松检查: assumptions 非空且非占位即通过
+            if all(str(a).strip() in ("", "待补充") for a in assumptions):
+                _add(
+                    "thinking_first_principles",
+                    "第一性原理: assumptions 均为占位符,请补充真实的底层假设。",
+                )
+
+        # 2. 逆向思维: 事前验尸(premortem)
+        premortem = spec_data.get("premortem", [])
+        if not premortem:
+            _add(
+                "thinking_premortem",
+                "逆向思维: 未做事前验尸(premortem)。建议先列'这个方案最可能怎么失败',"
+                "再决定是否继续。",
+            )
+        elif all(str(p).strip() in ("", "待补充") for p in premortem):
+            _add(
+                "thinking_premortem",
+                "逆向思维: premortem 均为占位符,请补充真实的失败场景。",
+            )
+
+        # --- DECIDE 维度 ---
+
+        # 3. 损益/机会成本: 有 options 时应记录 decision 和 tradeoff
+        options = spec_data.get("options", [])
+        decision = spec_data.get("decision")
+        tradeoff = spec_data.get("tradeoff")
+        if options and not decision:
+            _add(
+                "thinking_tradeoff_decision",
+                f"损益思维: 声明了 {len(options)} 个 options 但未记录 decision。"
+                "建议明确选择哪条路径(机会成本记录)。",
+            )
+        elif decision and not tradeoff:
+            _add(
+                "thinking_tradeoff_tradeoff",
+                "损益思维: 已记录 decision 但未记录 tradeoff(放弃了什么)。"
+                "建议补充机会成本说明。",
+            )
+
+        # 4. 奥卡姆剃刀: 多 options 时提示确认最简方案
+        if len(options) > 1:
+            _add(
+                "thinking_occam",
+                f"奥卡姆剃刀: 存在 {len(options)} 个候选方案。"
+                "如无必要勿增实体——确认是否选择了最简单可行的方案。",
+            )
+
+        # 5. 假设思维: assumptions 声明后应有验证计划(大胆假设,小心验证)
+        if assumptions and any(str(a).strip() not in ("", "待补充") for a in assumptions):
+            _add(
+                "thinking_hypothesis",
+                "假设思维: 已声明底层假设,建议为关键假设制定验证计划"
+                "(大胆假设,小心拿数据事实去验证)。",
+            )
+
+        # --- DO 维度 ---
+
+        # 6. 二八法则: P0 任务必须存在且完成(基于 plan_data)
+        tasks = plan_data.get("tasks", [])
+        p0_tasks = [t for t in tasks if t.get("priority", "P1") == "P0"]
+        if p0_tasks:
+            unfinished_p0 = [
+                t for t in p0_tasks
+                if t.get("status") not in ("done", "skipped")
+            ]
+            if unfinished_p0:
+                _add(
+                    "thinking_pareto",
+                    f"二八法则: {len(unfinished_p0)} 个 P0 任务未完成"
+                    f"({'/'.join(t.get('id', '?') for t in unfinished_p0[:3])})。"
+                    "80% 成果来自 20% 关键动作,建议优先完成 P0。",
+                )
+        elif tasks:
+            # 无 P0 任务(宽松提示)
+            _add(
+                "thinking_pareto",
+                "二八法则: 计划中无 P0 任务。建议标记 1-2 个关键任务为 P0"
+                "(80% 成果来自 20% 关键动作)。",
+            )
+
+        # 7. 能力圈: 圈外任务(learn/collab)应提示协作
+        outside_tasks = [
+            t for t in tasks
+            if (t.get("owner_skill") or "").lower() in ("learn", "collab", "outside")
+        ]
+        if outside_tasks:
+            _add(
+                "thinking_capability_circle",
+                f"能力圈: {len(outside_tasks)} 个任务标注为圈外"
+                f"({'/'.join(t.get('id', '?') for t in outside_tasks[:3])})。"
+                "圈外做事风险高,建议学习后做或找人协作。",
+            )
+
+        # 8. 反馈思维: 每个 task 应有可独立验证的 acceptance(小步反馈)
+        no_acceptance_tasks = [
+            t for t in tasks
+            if not t.get("acceptance") or all(str(a).strip() in ("", "待补充") for a in t.get("acceptance", []))
+        ]
+        if no_acceptance_tasks:
+            _add(
+                "thinking_feedback_loop",
+                f"反馈思维: {len(no_acceptance_tasks)} 个任务缺少可验证的验收标准"
+                f"({'/'.join(t.get('id', '?') for t in no_acceptance_tasks[:3])})。"
+                "小步获取反馈——每 task 应可独立验证。",
+            )
+
+        # 9. 冗余思维: 计划应预留缓冲(基于 plan_data.buffer)
+        buffer = plan_data.get("buffer")
+        if buffer is None:
+            _add(
+                "thinking_redundancy",
+                "冗余思维: 计划未预留 buffer(缓冲比例)。不要把资源排满——"
+                "预留安全垫应对意外。",
+            )
+        elif buffer <= 0:
+            _add(
+                "thinking_redundancy",
+                f"冗余思维: buffer={buffer} 未预留缓冲。资源排满时任何意外都会连带延期。",
+            )
+
+        return violations
 
     def _generate_spec_review_context(self, artifacts: dict) -> str:
         """生成 Spec 轴评审上下文（供 LLM 子代理使用）"""

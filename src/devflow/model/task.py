@@ -19,11 +19,21 @@ class TaskStatus(str, Enum):
     SKIPPED = "skipped"
 
 
+class TaskPriority(str, Enum):
+    """v0.3.3 二八法则: 任务优先级"""
+    P0 = "P0"  # 核心 20% 关键动作
+    P1 = "P1"  # 常规
+    P2 = "P2"  # 锦上添花
+
+
 class Task(BaseModel):
     """任务（Task）
 
     MVP 中 blocked_by 仅作列表字段，不做环检测。
     必填字段见 MVP-门禁降级矩阵 §0.4。
+    v0.3.3 思维字段（宽松默认,可选）:
+      priority   二八法则:  P0/P1/P2
+      owner_skill 能力圈: 擅长/短板标注(learn/collab 表示圈外需协作)
     """
     id: str = Field(..., description="Task ID，格式 task-<n>")
     title: str = Field(..., min_length=1)
@@ -35,6 +45,16 @@ class Task(BaseModel):
     status: TaskStatus = Field(default=TaskStatus.TODO)
     commits: list[str] = Field(default_factory=list, description="关联 commit SHA")
     wide_refactor: bool = Field(default=False)
+
+    # v0.3.3 思维字段（全部可选,宽松默认）
+    priority: TaskPriority = Field(
+        default=TaskPriority.P1,
+        description="v0.3.3 二八法则: 任务优先级(P0=核心关键动作)",
+    )
+    owner_skill: Optional[str] = Field(
+        default=None,
+        description="v0.3.3 能力圈: 擅长领域标注; 'learn'/'collab' 表示圈外需学习或协作",
+    )
 
     def can_skip(self) -> bool:
         """是否允许 skip（仅 todo 或 contracted 状态）"""

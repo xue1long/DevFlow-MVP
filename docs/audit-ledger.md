@@ -648,3 +648,50 @@ RFC 把 50%+ 工期（分代哈希 3d + 接口拆分 2d）投在 5-10% 用户价
 - 多 spec 双向 JOIN 完整版（NP0-2 需 v0.4 从根解决）
 
 ---
+
+## v0.3.3 实施结果（思维模型落地）
+
+> **决策**：用户需求——"项目吸收思维模型,应用到实际工作"。经第一性分析：**"强制 agent 用思维"是伪需求**(agent 可绕过一切检查,且引发形式主义),正确形态是**把思维变成引擎的默认规则**(字段 + 检查),靠审计留痕而非拦截。
+
+### 落地内容
+
+| 思维 | 字段 | 检查规则 | 严格度 |
+|---|---|---|---|
+| 第一性原理 | `Spec.assumptions` | `thinking_first_principles` | MINOR |
+| 逆向思维 | `Spec.premortem` | `thinking_premortem` | MINOR |
+| 损益思维 | `Spec.tradeoff` | `thinking_tradeoff_*` | MINOR |
+| 奥卡姆剃刀 | (用 options) | `thinking_occam` | MINOR |
+| 假设思维 | `Spec.assumptions` | `thinking_hypothesis` | MINOR |
+| 二八法则 | `Task.priority` | `thinking_pareto` | MINOR |
+| 能力圈 | `Task.owner_skill` | `thinking_capability_circle` | MINOR |
+| 反馈思维 | `Task.acceptance` | `thinking_feedback_loop` | MINOR |
+| 冗余思维 | `Plan.buffer` | `thinking_redundancy` | MINOR |
+
+**设计原则**：
+- 全部字段 Optional(宽松默认: 有值才检查,旧 Spec/Plan 不受影响)
+- 全部 severity=MINOR(提示不阻断推进——灰度思维: 可行解优先)
+- `thinking.enabled: false` 可完全关闭(兼容旧 SOP)
+- 不碰哈希链 / 账本 schema / 状态机阶段
+
+**改动文件**：
+- `src/devflow/model/spec.py`（assumptions/premortem/tradeoff）
+- `src/devflow/model/task.py`（priority/owner_skill）
+- `src/devflow/model/plan.py`（buffer + 修复 Optional 导入）
+- `src/devflow/policy/loader.py`（ThinkingConfig）
+- `src/devflow/engine/review_engine.py`（_run_thinking_checks 9 条）
+- `config/sop.default.yaml`（thinking 段）
+- `tests/test_thinking_rules.py`（9 条新测试）
+- `docs/CHANGELOG.md`（[v0.3.3] 段）
+- `docs/thinking-framework-mapping.md`（24 思维映射总表）
+
+**全量回归**：**121 passed**（v0.3.2 基线 111 + 新 10）
+
+**审计视角的自我评估**（对照本台账反复出现的教训）：
+- ✅ 未扩账本 schema（无哈希链风险）
+- ✅ 未新增状态机阶段（8 阶段不变）
+- ✅ 未引入新依赖
+- ✅ 宽松默认,旧 Spec/Plan 零破坏
+- ✅ 可关闭(`thinking.enabled: false`)
+- ⚠️ 若未来有人把思维检查改 blocking,需重走审计（本台账第 5/6 轮教训: 扩 schema/改语义前先过第一性 SOP）
+
+---

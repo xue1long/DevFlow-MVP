@@ -68,3 +68,7 @@ sop:
     glossary: CONTEXT.md
     content_address: false
   allow_fast_forward: false
+  # v0.3.3: 思维模型落地配置(宽松默认: MINOR 提示不阻断)
+  thinking:
+    enabled: true
+    severity: "minor"
