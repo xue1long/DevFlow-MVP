@@ -28,6 +28,7 @@
 | [devflow-first-audit-report-v0.1.md](./devflow-first-audit-report-v0.1.md) | 审计报告 | 第 1 轮首轮审计（独立第三方） |
 | [audit-ledger.md](./audit-ledger.md) | 审计台账 | 全部轮次审计 + 整改 + 复评 + 残余风险 |
 | [audit-prompt-template-v0.1.md](./audit-prompt-template-v0.1.md) | 提示词模板 | 4 角色评审 + 复核 + 整改 SOP |
+| [first-principles-sop.md](./first-principles-sop.md) | 元方法 | v0.1 | 第一性原理 4 阶段实践（方案→评审→整改→复核） |
 
 ## 项目结构
 
@@ -41,6 +42,7 @@ devflow/
 │   ├── CHANGELOG.md       ← 变更日志
 │   ├── audit-ledger.md    ← 审计整改台账
 │   ├── audit-prompt-template-v0.1.md
+│   ├── first-principles-sop.md
 │   ├── devflow-architecture-v0.1.md
 │   ├── devflow-mvp-brief.md
 │   ├── devflow-first-audit-report-v0.1.md

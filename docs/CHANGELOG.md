@@ -17,6 +17,10 @@
   - `devflow finish`（Stage 7）自动触发软归档
   - 详见 [`docs/INDEX_FORMAT.md`](./INDEX_FORMAT.md)
 - 新增 `tests/test_archive_index.py`（10 条验证测试）
+- **第一性原理 SOP** 文档：详见 [`docs/first-principles-sop.md`](./first-principles-sop.md)
+  - 4 阶段元方法（方案/评审/整改/复核）
+  - 5 步拆解 + 质疑话术 + 验证话术
+  - 实战案例：v0.3 工作区布局的第一性分析
 
 ### Changed
 - （暂无）
