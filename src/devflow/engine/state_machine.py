@@ -20,6 +20,9 @@ from ..storage.git_port import GitPort
 from ..policy.loader import SOPConfig
 from ..verify.gate_runner import GateRunner
 
+if False:  # 仅用于类型标注，避免循环导入
+    from .review_engine import ReviewEngine
+
 
 class PhaseError(Exception):
     """阶段推进错误"""
@@ -48,11 +51,13 @@ class PhaseStateMachine:
         config: SOPConfig,
         git: Optional[GitPort] = None,
         gate_runner: Optional[GateRunner] = None,
+        review_engine: Optional['ReviewEngine'] = None,
     ):
         self.storage = storage
         self.config = config
         self.git = git
         self.gate_runner = gate_runner
+        self.review_engine = review_engine
 
     @property
     def current_phase(self) -> int:
@@ -330,6 +335,18 @@ class PhaseStateMachine:
                     "gate": gate_name,
                     "pass": gate_result["ok"],
                     "message": gate_result.get("message", ""),
+                })
+
+        # review_gate 门禁
+        if self.review_engine and phase >= 2:
+            review_gate = self.config.gates.get("review_gate")
+            if review_gate and review_gate.enabled and review_gate.bind_to_stage == phase:
+                rv = self.review_engine.check_review_gate()
+                results.append({
+                    "gate": "review_gate",
+                    "pass": rv["ok"],
+                    "message": rv.get("message", ""),
+                    "violations": rv.get("violations", []),
                 })
 
         all_pass = all(r["pass"] for r in results)

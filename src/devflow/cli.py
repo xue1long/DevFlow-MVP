@@ -13,9 +13,11 @@ import typer
 
 from .storage.fs_backend import FSBackend
 from .storage.git_port import SystemGitPort
+from .storage.review_store import ReviewStore
 from .policy.loader import load_sop
 from .engine.state_machine import PhaseStateMachine
 from .engine.redline_auditor import RedLineAuditor
+from .engine.review_engine import ReviewEngine
 from .verify.gate_runner import GateRunner
 
 app = typer.Typer(
@@ -43,8 +45,15 @@ def _get_machine() -> tuple[PhaseStateMachine, FSBackend, 'SOPConfig']:
     config = _get_config()
     git = SystemGitPort(_get_root())
     gate_runner = GateRunner(config, str(_get_root()))
-    machine = PhaseStateMachine(storage, config, git=git, gate_runner=gate_runner)
+    review_engine = _get_review_engine(storage, config)
+    machine = PhaseStateMachine(storage, config, git=git, gate_runner=gate_runner, review_engine=review_engine)
     return machine, storage, config
+
+
+def _get_review_engine(storage: FSBackend, config: 'SOPConfig') -> ReviewEngine:
+    """组装 ReviewEngine"""
+    review_store = ReviewStore(_get_root())
+    return ReviewEngine(storage, config, review_store)
 
 
 def _output(result: dict) -> None:
@@ -73,6 +82,7 @@ def init():
     tests_pass: {command: "pytest --import-mode=importlib -q", blocking: true, enabled: true, bind_to_stage: 5}
     ci_green: {command: "echo ci-check-placeholder && exit 0", blocking: false, enabled: true, bind_to_stage: 6}
     intake_gate: {kind: triage, require: "ready-for-agent", blocking: true, enabled: true, bind_to_stage: 0}
+    review_gate: {kind: "review", blocking: true, enabled: true, bind_to_stage: 2, max_rounds: 5, require_clear: true}
   modules: {facade: "__init__.py", forbidden_import: ["service/", "model/", "utils/internal/"]}
   tooling: {test_runner: "pytest", import_mode: "importlib", proxy_strip: true}
   storage: {backend: fs, specs_dir: specs, plans_dir: plans, ledger: progress.yaml, glossary: CONTEXT.md, content_address: false}
@@ -175,6 +185,46 @@ def skip_task(task_id: str, reason: str = typer.Option(..., "--reason", help="�
     """跳过指定 task"""
     machine, _, _ = _get_machine()
     result = machine.skip_task(task_id, reason)
+    _output(result)
+
+
+# --- 审核闭环命令 ---
+
+
+@app.command()
+def review(
+    spec_id: Optional[str] = typer.Argument(None, help="指定 Spec ID，默认当前活跃 Spec"),
+    round: Optional[int] = typer.Option(None, "--round", "-r", help="指定评审轮次"),
+):
+    """执行双轴评审（Standards × Spec）"""
+    _, storage, config = _get_machine()
+    engine = _get_review_engine(storage, config)
+    result = engine.review(spec_id=spec_id, round=round)
+    _output(result)
+
+
+@app.command()
+def fix(
+    violation_ids: list[str] = typer.Argument(..., help="要修复的违规 ID，如 S-001 SP-001"),
+    note: str = typer.Option("", "--note", "-n", help="修复摘要"),
+    residual: bool = typer.Option(False, "--residual", help="登记为残余风险（不修复）"),
+    skip: bool = typer.Option(False, "--skip", help="跳过（不修复，直接标记）"),
+):
+    """修复违规"""
+    _, storage, config = _get_machine()
+    engine = _get_review_engine(storage, config)
+    result = engine.fix(violation_ids, summary=note, residual=residual, skip=skip)
+    _output(result)
+
+
+@app.command()
+def history(
+    spec_id: Optional[str] = typer.Argument(None, help="指定 Spec ID，默认当前活跃 Spec"),
+):
+    """查看审核历史"""
+    _, storage, config = _get_machine()
+    engine = _get_review_engine(storage, config)
+    result = engine.history(spec_id=spec_id)
     _output(result)
 
 

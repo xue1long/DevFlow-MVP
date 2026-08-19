@@ -40,6 +40,14 @@ sop:
       blocking: true
       enabled: true
       bind_to_stage: 0
+    review_gate:
+      kind: "review"
+      blocking: true
+      enabled: true
+      bind_to_stage: 2
+      max_rounds: 5
+      require_clear: true
+      note: "计划/契约阶段出口需先通过 devflow review 双轴评审"
   modules:
     facade: "__init__.py"
     forbidden_import: ["service/", "model/", "utils/internal/"]

@@ -22,6 +22,9 @@ class LedgerAction(str, Enum):
     SUSPEND = "suspend"
     RESUME = "resume"
     PHASE_TRANSITION = "phase_transition"
+    REVIEW = "review"
+    FIX = "fix"
+    ESCALATE = "escalate"
 
 
 class LedgerEntry(BaseModel):

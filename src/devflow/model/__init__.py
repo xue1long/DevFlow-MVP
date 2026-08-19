@@ -7,6 +7,7 @@ from .quality_gate import QualityGate
 from .ledger import LedgerEntry, LedgerAction
 from .domain_model import DomainModel
 from .intake import Intake, IntakeKind, TriageState
+from .review import ReviewReport, ReviewViolation, ReviewVerdict, ViolationSeverity, FixRecord, AxeReview
 
 __all__ = [
     "Spec", "SpecStatus",
@@ -17,4 +18,5 @@ __all__ = [
     "LedgerEntry", "LedgerAction",
     "DomainModel",
     "Intake", "IntakeKind", "TriageState",
+    "ReviewReport", "ReviewViolation", "ReviewVerdict", "ViolationSeverity", "FixRecord", "AxeReview",
 ]
