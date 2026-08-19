@@ -64,11 +64,15 @@ def _output(result: dict) -> None:
 # --- 11 个子命令 ---
 
 @app.command()
-def init():
+def init(no_graphify_hook: bool = typer.Option(
+    False, "--no-graphify-hook",
+    help="跳过 graphify hooks 安装(默认自动安装,若 graphify 可用)",
+)):
     """初始化 DevFlow 工作区
 
     优先从 config/sop.default.yaml 读取；如不存在则使用内嵌的最小子集，
     提示用户尽快创建配置文件（避免双份维护）。
+    初始化后自动尝试安装 graphify hooks(知识图谱自动更新)。
     """
     import sys
     root = _get_root()
@@ -101,7 +105,70 @@ def init():
   allow_fast_forward: false
 """
     storage.init_workspace(sop_content)
-    _output({"ok": True, "message": "DevFlow 工作区已初始化", "files": ["sop.yaml", "specs/", "plans/", "progress.yaml", "CONTEXT.md"]})
+
+    result = {"ok": True, "message": "DevFlow 工作区已初始化",
+              "files": ["sop.yaml", "specs/", "plans/", "progress.yaml", "CONTEXT.md"]}
+
+    # v0.3.4: 初始化后自动安装 graphify hooks(知识图谱自动更新)
+    if not no_graphify_hook:
+        result["graphify_hooks"] = _try_install_graphify_hooks(root)
+    else:
+        result["graphify_hooks"] = {"ok": True, "message": "已跳过(--no-graphify-hook)"}
+
+    _output(result)
+
+
+def _try_install_graphify_hooks(root: Path) -> dict:
+    """尝试安装 graphify hooks(非阻塞)
+
+    检测 graphify CLI 与 git 仓库:
+    - 都是可用 → graphify hook install(幂等)
+    - graphify 不可用 → 提示安装方式,不阻断 init
+    - 非 git 仓库 → 提示 git init 后再装,不阻断 init
+    """
+    import shutil
+    import subprocess as _sp
+
+    # 非 git 仓库: hooks 无处安装,提示即可
+    if not (root / ".git").exists() and not (root / ".git").is_dir():
+        return {
+            "ok": False,
+            "message": (
+                "当前目录不是 git 仓库,跳过 graphify hooks 安装。"
+                "git init 后重新运行 devflow init 或手动执行 graphify hook install"
+            ),
+        }
+
+    graphify_bin = shutil.which("graphify")
+    if graphify_bin is None:
+        return {
+            "ok": False,
+            "message": (
+                "未检测到 graphify CLI,跳过 hooks 安装。"
+                "如需知识图谱自动更新: uv tool install graphifyy "
+                "后重新运行 devflow init 或手动执行 graphify hook install"
+            ),
+        }
+
+    try:
+        proc = _sp.run(
+            [graphify_bin, "hook", "install"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+        if proc.returncode == 0:
+            return {"ok": True, "message": "graphify hooks 已安装(post-commit 自动更新知识图谱)"}
+        return {
+            "ok": False,
+            "message": f"graphify hook install 退出码 {proc.returncode}: "
+                       f"{(proc.stderr or proc.stdout or '').strip()[:200]}",
+        }
+    except Exception as e:
+        return {"ok": False, "message": f"graphify hook install 异常: {e}"}
 
 
 @app.command()
