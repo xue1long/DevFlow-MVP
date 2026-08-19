@@ -1,6 +1,10 @@
 """StorageBackend — 存储后端抽象接口
 
 引擎层只依赖此接口，不直接依赖 FSBackend。
+
+v0.3 增强（第一性方案）：
+- archive_index(): 软归档（不移动文件，在账本标记状态）
+- query(): 逻辑查询（返回 spec 索引映射）
 """
 from __future__ import annotations
 
@@ -63,6 +67,33 @@ class StorageBackend(ABC):
     def read_handoff(self, phase: int) -> Optional[str]: ...
     @abstractmethod
     def find_latest_handoff(self) -> Optional[tuple[int, str]]: ...
+
+    # --- v0.3 增强：软归档 + 逻辑查询 ---
+
+    @abstractmethod
+    def archive_spec(self, spec_id: str, reason: str,
+                     final_stage: Optional[int] = None) -> dict:
+        """软归档一个 Spec（不移动文件）
+
+        在 ledger.yaml 的 `archive` 段记录归档状态与文件路径，
+        文件本身保持在原位。返回归档记录。
+        """
+
+    @abstractmethod
+    def list_archived_specs(self) -> list[dict]:
+        """列出所有已归档的 Spec（含归档元数据）"""
+
+    @abstractmethod
+    def list_active_specs(self) -> list[str]:
+        """列出活跃（未归档）的 Spec ID"""
+
+    @abstractmethod
+    def query(self, keyword: str = "",
+              include_archived: bool = False) -> list[dict]:
+        """跨 Spec/Plan/Review 搜索关键词
+
+        返回匹配的 Spec 列表，每项含 spec_id、match_locations、status
+        """
 
     # --- 项目根目录 ---
     @property

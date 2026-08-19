@@ -1,0 +1,134 @@
+# DevFlow INDEX 设计（v0.3）
+
+> **核心思想**：不重组文件路径，在抽象层提供 INDEX/归档/查询能力。
+>
+> **对应设计决策**：见[`audit-ledger.md`](./audit-ledger.md) 第 3 轮评审 → v0.3 第一性方案。
+
+## 1. 为什么用 INDEX 而不是重组目录？
+
+### 4 角色评审指出的致命矛盾
+
+v0.3 重组路径的设计会破坏账本哈希链（迁移改写路径 → 哈希断裂 → 审计失效），这与第 3 轮 P0-3 整改措施根本冲突。
+
+### 第一性原则
+
+用户的**真实文件路径不变**，DevFlow 通过**逻辑抽象层**提供"看起来迁移过了"的能力。
+
+| 用户诉求 | v0.3 原设计 | 第一性方案 |
+|----------|-------------|------------|
+| 隔离运行时数据 | 全部迁入 `doc/devflow-workspace/` | **保持原位 + INDEX 元数据** |
+| 归档已完成 Spec | 物理移动到 `archive/` | **账本标记 + INDEX 查询** |
+| 跨 Spec 搜索 | (无能力) | **query() 跨文件搜索** |
+| 可移交工作区 | 整体打包 `doc/devflow-workspace/` | **devflow export 元数据 + 文件引用** |
+
+## 2. INDEX 数据结构
+
+**存储位置**：账本（`progress.yaml`）的 `archive` 段，**不影响 entries 哈希链**。
+
+```yaml
+# progress.yaml 结构（v0.3 增强）
+current_spec_id: "2026-08-19-pipeline-retry"
+current_plan_id: "plan-2026-08-19-pipeline-retry"
+current_phase: 7
+suspended: false
+chain_head: "abc123..."
+entries: [...]                  # 哈希链完整保留
+
+archive:                        # v0.3 新增：INDEX 数据
+  2026-08-19-pipeline-retry:
+    archived_at: "2026-08-19T22:00:00.000000"
+    final_stage: 7              # 最终阶段（finish）
+    reason: "completed via devflow finish"
+    files_at:                   # 文件位置索引（路径不变）
+      spec: "specs/2026-08-19-pipeline-retry.yaml"
+      plan: "plans/plan-2026-08-19-pipeline-retry.yaml"
+      reviews: "review/2026-08-19-pipeline-retry/"
+```
+
+## 3. 三个新接口（StorageBackend ABC）
+
+### 3.1 `archive_spec(spec_id, reason, final_stage=None)`
+
+**软归档**：不移动文件，在账本 `archive` 段记录。
+
+- 文件保留原位（用户可见、可编辑、可手动管理）
+- `archive.<spec_id>` 段记录归档元数据
+- 不破坏 entries 哈希链（archive 段独立）
+- `final_stage` 默认为 `current_phase`
+
+### 3.2 `list_archived_specs() / list_active_specs()`
+
+**列表查询**：分别返回归档/活跃 Spec。
+
+- `list_archived_specs()` 返回完整元数据（含 `archived_at`、`files_at`）
+- `list_active_specs()` 返回活跃 Spec ID（基于 `specs/*.yaml` 与 archive 段求差集）
+
+### 3.3 `query(keyword="", include_archived=False)`
+
+**跨文件搜索**：扫描 `specs/`、`plans/`、`review/` 目录，按关键词匹配。
+
+- 空 keyword：返回所有 Spec（按 archive 过滤）
+- 非空 keyword：返回至少一处匹配的 Spec
+- `include_archived=True` 时包含已归档 Spec
+- 每项返回 `match_locations` 列表（`spec` / `plan:xxx.yaml` / `review:r1.yaml`）
+
+## 4. CLI 命令
+
+| 命令 | 说明 |
+|------|------|
+| `devflow archive <spec-id> --reason <原因>` | 软归档 Spec |
+| `devflow list-archived` | 列出已归档 Spec |
+| `devflow list-active` | 列出活跃 Spec |
+| `devflow find <关键词>` | 跨文件搜索（`--all` 含归档）|
+
+## 5. 自动归档触发
+
+进入 Stage7（finish）时，`next_phase()` 自动调用 `archive_spec()` 软归档当前活跃 Spec：
+
+```python
+# state_machine.py _archive_on_finish()
+if spec_id and hasattr(self.storage, "archive_spec"):
+    archive_record = self.storage.archive_spec(
+        spec_id=spec_id,
+        reason="completed via devflow finish (Stage 7)",
+        final_stage=phase,
+    )
+```
+
+**效果**：Stage7 是流程终点，过关后自动归档，无须用户手动操作。
+
+## 6. 不破坏向后兼容
+
+| 兼容性维度 | 保证 |
+|------------|------|
+| **v0.2 → v0.3 升级** | 无破坏：文件路径不变，账本加 `archive` 段 |
+| **v0.2 用户的旧账本** | 直接可用：`archive` 段缺失时按空字典处理 |
+| **现有 CLI 命令** | 100% 兼容：旧命令均不涉及 archive |
+| **现有测试** | 82 passed 已验证（v0.3 后仍 82 passed） |
+
+## 7. 与未来 v0.4 的衔接
+
+v0.3 INDEX 是 v0.4 完整迁移方案的"前置基础设施"：
+
+| 阶段 | 产物 |
+|------|------|
+| v0.3（当前） | INDEX + 软归档 + 查询 |
+| v0.4 | 在 INDEX 之上做物理迁移（迁移脚本从 INDEX 反推路径映射，无需手动维护） |
+| v0.5+ | 完全重构路径（路径已无强依赖，可平滑切换） |
+
+**关键洞察**：先建 INDEX 再做物理迁移，远比直接做物理迁移安全。
+
+## 8. 实施清单
+
+- [x] `storage/base.py` 增加 4 个 ABC 方法
+- [x] `storage/fs_backend.py` 实现 archive_spec / list_archived_specs / list_active_specs / query
+- [x] `engine/state_machine.py` _archive_on_finish() 在 Stage7 触发
+- [x] `cli.py` 增加 archive / list-archived / list-active / find 命令
+- [x] `tests/test_archive_index.py` 验证测试
+- [x] `docs/INDEX_FORMAT.md` 本设计文档
+
+---
+
+**本规范版本**：v0.3（2026-XX-XX）
+**实施日期**：v0.3 第 2 阶段（第一性方案落地）
+**维护者**：DevFlow 项目主控

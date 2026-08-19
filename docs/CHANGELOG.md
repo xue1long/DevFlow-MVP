@@ -7,16 +7,16 @@
 ## [Unreleased]
 
 ### Planned（v0.3 设计中，未实施）
-- **工作区布局重构**：运行时产物统一迁入 `doc/devflow-workspace/` 子目录
-  - `plans/`（按 Spec 分目录）
-  - `reviews/`（按 Spec 分目录）
-  - `implementations/`（按 Spec 分目录）
-  - `archive/finished/<stage>/`（按阶段归档）
-  - `data/`（账本、术语表、锁文件）
-- 详见 [`docs/workspace-layout-v0.1.md`](./workspace-layout-v0.1.md)
+- **工作区布局重构**：运行时产物统一迁入 `doc/devflow-workspace/` 子目录（已评估，改用第一性方案）
+- 详见 [`docs/workspace-layout-v0.1.md`](./workspace-layout-v0.1.md)（**第一性方案替代**）
 
 ### Added
-- （暂无）
+- **v0.3 第一性方案：INDEX + 软归档 + 跨文件搜索**（替代全量路径迁移）
+  - 新增 `StorageBackend.archive_spec()` / `list_archived_specs()` / `list_active_specs()` / `query()` 接口
+  - 新增 CLI：`devflow archive` / `devflow list-archived` / `devflow list-active` / `devflow find`
+  - `devflow finish`（Stage 7）自动触发软归档
+  - 详见 [`docs/INDEX_FORMAT.md`](./INDEX_FORMAT.md)
+- 新增 `tests/test_archive_index.py`（10 条验证测试）
 
 ### Changed
 - （暂无）

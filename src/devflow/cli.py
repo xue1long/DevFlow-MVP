@@ -294,5 +294,72 @@ def history(
     _output(result)
 
 
+# --- v0.3 增强命令：软归档 + 跨文件查询（第一性方案） ---
+
+
+@app.command()
+def archive(
+    spec_id: Optional[str] = typer.Argument(None, help="Spec ID，默认当前活跃 Spec"),
+    reason: str = typer.Option(..., "--reason", "-r", help="归档原因（必填）"),
+):
+    """软归档 Spec（文件保留原位，仅在账本标记状态）"""
+    storage = FSBackend(_get_root())
+    if spec_id is None:
+        spec_id = storage.get_current_spec_id()
+        if spec_id is None:
+            _output({"ok": False, "message": "未指定 Spec ID 且当前无活跃 Spec"})
+            return
+    record = storage.archive_spec(spec_id, reason=reason)
+    _output({
+        "ok": True,
+        "message": f"Spec '{spec_id}' 已软归档（文件保留原位）",
+        "archive_record": record,
+    })
+
+
+@app.command(name="list-archived")
+def list_archived():
+    """列出所有已归档的 Spec"""
+    storage = FSBackend(_get_root())
+    items = storage.list_archived_specs()
+    _output({
+        "ok": True,
+        "total": len(items),
+        "items": items,
+    })
+
+
+@app.command(name="list-active")
+def list_active():
+    """列出活跃（未归档）的 Spec ID"""
+    storage = FSBackend(_get_root())
+    items = storage.list_active_specs()
+    _output({
+        "ok": True,
+        "total": len(items),
+        "spec_ids": items,
+    })
+
+
+@app.command()
+def find(
+    keyword: str = typer.Argument("", help="搜索关键词（留空列出所有）"),
+    include_archived: bool = typer.Option(False, "--all", help="包含已归档 Spec"),
+):
+    """跨 Spec/Plan/Review 文件搜索关键词
+
+    空关键词时列出全部 Spec（按 archive 过滤）。
+    """
+    storage = FSBackend(_get_root())
+    results = storage.query(keyword=keyword, include_archived=include_archived)
+    _output({
+        "ok": True,
+        "keyword": keyword,
+        "include_archived": include_archived,
+        "total": len(results),
+        "results": results,
+    })
+
+
 if __name__ == "__main__":
     app()

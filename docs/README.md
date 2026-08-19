@@ -8,7 +8,8 @@
 |------|------|------|------|
 | [README.md](../README.md) | 上手指南 | — | 安装、5 分钟上手、CLI 速查、架构图 |
 | [DOCS_GUIDELINES.md](./DOCS_GUIDELINES.md) | 规范 | v0.1 | 文档命名 + 归档 + 版本号约定 |
-| [workspace-layout-v0.1.md](./workspace-layout-v0.1.md) | 设计 | v0.3 设计 | 用户项目内 DevFlow 工作区目录结构 |
+| [workspace-layout-v0.1.md](./workspace-layout-v0.1.md) | 设计 | v0.3 第一性方案 | 用户项目内 DevFlow 工作区目录结构（评审后采用 INDEX 替代） |
+| [INDEX_FORMAT.md](./INDEX_FORMAT.md) | 设计 | v0.3 | 软归档 + 跨文件查询（INDEX 方案） |
 | [CHANGELOG.md](./CHANGELOG.md) | 变更日志 | — | v0.1 / v0.2 / v0.2.1 + Unreleased |
 
 ## 设计文档
