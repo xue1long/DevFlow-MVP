@@ -1,0 +1,57 @@
+# DevFlow · 默认 SOP 配置模板
+# devflow init 时复制到项目根目录
+#
+# 文档权威级：MVP-门禁降级矩阵.md > DevFlow-MVP-实现简报.md > 本文件 > 架构文档
+
+sop:
+  sop_version: "0.1"
+  phases: [intake, brainstorm, plan, contract, implement, verify, review, finish]
+  intake_fast_skip: true
+  red_lines:
+    - skip_phase
+    - no_test
+    - cross_module_import
+    - huge_pr
+    - uncommitted_bulk
+    - main_incomplete
+    - doc_drift
+    - silent_legacy
+    - no_contract
+    - circular_dep:
+        mvp_skip: true
+    - human_step_auto
+  pr_max_files: 30
+  minimalism_strictness: full
+  gates:
+    tests_pass:
+      command: "pytest --import-mode=importlib -q"
+      blocking: true
+      enabled: true
+      bind_to_stage: 5
+    ci_green:
+      command: "echo ci-check-placeholder && exit 0"
+      blocking: false
+      enabled: true
+      bind_to_stage: 6
+      note: "⚠️ 占位命令，接入真实 CI 后改为 blocking: true"
+    intake_gate:
+      kind: triage
+      require: "ready-for-agent"
+      blocking: true
+      enabled: true
+      bind_to_stage: 0
+  modules:
+    facade: "__init__.py"
+    forbidden_import: ["service/", "model/", "utils/internal/"]
+  tooling:
+    test_runner: "pytest"
+    import_mode: "importlib"
+    proxy_strip: true
+  storage:
+    backend: fs
+    specs_dir: specs
+    plans_dir: plans
+    ledger: progress.yaml
+    glossary: CONTEXT.md
+    content_address: false
+  allow_fast_forward: false
