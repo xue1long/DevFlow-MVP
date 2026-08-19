@@ -4,6 +4,34 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [v0.3.1-r2] - 2026-08-19（最简替代修补）
+
+> **v0.3.1-r1 方案（4 项 P1 全修 + pytest-cov）在 4 角色独立审计后回退**（7 个交叉 P0，重蹈 v0.3 INDEX 覆辙）。本版本为 r2 最简替代版，零破坏兼容、零新依赖、零 schema 变更。
+
+### Added（新增）
+- **P1-9（简化）**：新增 CLI `devflow ci-status` — 显示 ci_green 门禁当前配置状态（disabled / enabled），明确告知占位命令状态
+- **P1-13（简化）**：新增 CLI `devflow review-audit` — 扫描 ledger 的 review/fix/escalate 条目，与 review_store 报告做 JOIN，检测孤儿条目
+  - **不修改 LedgerEntry schema**（避免破坏哈希链）
+  - **不修改 review_engine.py 写入点**（避免 5 处漏算风险）
+  - 单 spec 工作流下准确；多 spec 场景需 v0.4 完整方案
+- **P1-5（改进）**：`devflow audit` 输出新增 `violations_real` / `skipped_detail` / `total_real` / `total_skipped` / `coverage` 字段，区分真实违规与 stub 红线
+- 新增 `tests/test_v031_r2.py`（7 条验证测试）
+
+### Changed（变更）
+- **P1-2（简化）**：`config/sop.default.yaml` 中 `ci_green.enabled` 默认值 `true → false`（占位命令不应启用，避免"已启用但实际是占位"的误导）
+- `src/devflow/engine/redline_auditor.py`：5 条 stub 红线（`skip_phase` / `doc_drift` / `silent_legacy` / `no_contract` / `human_step_auto`）改为显式返回 `RedLineViolation(skip=True)`，让用户看到"未自动检测"而非"无声通过"
+
+### Fixed（修复）
+- **隐性兼容修复**：`ci_green` 不再默认启用占位命令（此前 `enabled: true` 但命令是 `echo` 占位，用户误以为 CI 在跑）
+- **审计透明性修复**：stub 红线此前静默返回 `[]`，用户无法区分"已检查"与"未实现"；现在显式标 `skip=True`
+
+### Notes
+- v0.3.1-r1 方案（`docs/v0.3.1-implementation.md`）已被本版本取代，保留作历史档案
+- P1-5/P1-13 完整方案（多 spec JOIN、反向校验、status 字段）留 v0.4 大重构
+- 详见 [`docs/v0.3.1-r2-implementation.md`](./v0.3.1-r2-implementation.md) 与 [`docs/audit-ledger.md`](./audit-ledger.md) 第 5 轮
+
+---
+
 ## [Unreleased]
 
 ### Added
