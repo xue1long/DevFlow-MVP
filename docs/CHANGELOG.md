@@ -10,7 +10,6 @@
 - **知识图谱（graphify）**：README 新增「知识图谱」章节——graphify-out/ 产物说明、commit hook 自动更新说明（新克隆仓库需 `graphify hook install`）、手动更新/跳过/日志方法
 - `RedLineAuditor.implemented_rule_names()`：返回已实现自动检测的红线名称列表（audit 覆盖度展示用）
 - **`scripts/install-hooks.py`**：一键安装 graphify hooks 的跨平台脚本（自动检测 CLI、幂等、含 --check/--uninstall）
-- **`devflow init` 集成 graphify hooks**：初始化后自动检测 graphify 并安装 hooks（非阻塞；非 git 仓库/无 graphify 时给出提示）；`--no-graphify-hook` 可跳过
 
 ### Changed
 - README 头部版本号 v0.2 → v0.3.3；测试数量 76 → 121；架构图红线描述更新（11 红线 + 9 思维检查）

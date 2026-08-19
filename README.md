@@ -69,7 +69,7 @@ devflow history
 
 | 命令 | 阶段 | 说明 |
 |------|------|------|
-| `devflow init` | — | 初始化工作区（创建 sop.yaml + specs/ + plans/；自动安装 graphify hooks，`--no-graphify-hook` 跳过） |
+| `devflow init` | — | 初始化工作区（创建 sop.yaml + specs/ + plans/） |
 | `devflow start "<需求>"` | 0 | 创建 Spec + Intake |
 | `devflow approve <spec-id>` | 0-1 | 校验 Spec 必填字段并 approve |
 | `devflow next` | * | 推进到下一阶段（含门禁检查） |
