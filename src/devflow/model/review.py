@@ -78,6 +78,16 @@ class ReviewReport(BaseModel):
 
     @property
     def residual_count(self) -> int:
+        """登记为残余风险的违规总数（P2-10: 不依赖 resolved 状态）
+
+        fix() 设计：当用户用 --residual 时同时设 residual=True 和 resolved=True，
+        表示"不再修复，作为残余风险登记"。residual_count 应当真实反映残余数量。
+        """
+        return sum(1 for v in self._all_violations() if v.residual)
+
+    @property
+    def active_residual_count(self) -> int:
+        """尚未被解决的残余风险（resolved=False 且 residual=True），用于提醒仍需关注"""
         return sum(1 for v in self._all_violations() if v.residual and not v.resolved)
 
     @property

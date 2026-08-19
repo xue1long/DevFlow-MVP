@@ -446,49 +446,140 @@ class PhaseStateMachine:
         return {"ok": True, "message": f"已挂起在 Stage{phase}，handoff 文件已生成"}
 
     def resume(self) -> dict:
-        """从挂起状态恢复"""
+        """从挂起状态恢复（P2-19: 验证恢复后文件系统一致性）"""
         handoff = self.storage.find_latest_handoff()
         if handoff is None:
             return {"ok": False, "message": "未找到 handoff 文件，无法 resume"}
 
         phase, content = handoff
+
+        # P2-19: 验证账本中的 spec/plan 引用是否仍存在
+        warnings = []
+        spec_id = self.storage.get_current_spec_id()
+        if spec_id and self.storage.read_spec(spec_id) is None:
+            warnings.append(f"账本引用 Spec '{spec_id}' 但文件已不存在")
+        plan_id = self.storage.get_current_plan_id()
+        if plan_id and self.storage.read_plan(plan_id) is None:
+            warnings.append(f"账本引用 Plan '{plan_id}' 但文件已不存在")
+
+        # 恢复阶段 + 写账本
         self.storage.set_current_phase(phase)
         self.storage.set_suspended(False)
         self.storage.append_ledger(LedgerEntry(
             phase=phase,
             action=LedgerAction.RESUME,
-            details=f"从 handoff-{phase}.md 恢复",
+            details=f"从 handoff-{phase}.md 恢复"
+                    + (f"（⚠️ {len(warnings)} 个一致性警告）" if warnings else ""),
         ))
 
         gate_result = self._check_exit_gate(phase)
+        result = {
+            "ok": True,
+            "phase": phase,
+            "phase_name": self.PHASE_NAMES[phase],
+            "warnings": warnings,
+            "gate": gate_result,
+        }
         if gate_result["ok"]:
-            return {
-                "ok": True,
-                "message": f"已恢复到 Stage{phase} ({self.PHASE_NAMES[phase]})，当前阶段出口门禁已通过，可执行 devflow next 推进",
-            }
+            result["message"] = (
+                f"已恢复到 Stage{phase} ({self.PHASE_NAMES[phase]})，"
+                f"当前阶段出口门禁已通过，可执行 devflow next 推进"
+            )
         else:
-            return {
-                "ok": True,
-                "message": f"已恢复到 Stage{phase} ({self.PHASE_NAMES[phase]})，当前阶段出口门禁未通过: {gate_result['message']}",
-            }
+            result["message"] = (
+                f"已恢复到 Stage{phase} ({self.PHASE_NAMES[phase]})，"
+                f"当前阶段出口门禁未通过: {gate_result['message']}"
+            )
+        return result
 
     def get_status(self) -> dict:
-        """返回当前状态"""
+        """返回当前状态（含 Spec/Plan/Task 摘要，P2-3）"""
         phase = self.current_phase
         blockers = []
         gate_result = self._check_exit_gate(phase)
         if not gate_result["ok"]:
             blockers.append(gate_result["message"])
 
+        # P2-3: Spec 摘要
+        spec_summary = None
+        spec_id = self.storage.get_current_spec_id()
+        if spec_id:
+            spec_data = self.storage.read_spec(spec_id)
+            if spec_data:
+                goals = spec_data.get("goals") or []
+                non_goals = spec_data.get("non_goals") or []
+                problem = spec_data.get("problem") or ""
+                placeholder_count = sum(
+                    1 for g in goals if str(g).strip() in ("待补充", "")
+                )
+                spec_summary = {
+                    "id": spec_id,
+                    "title": spec_data.get("title", ""),
+                    "status": spec_data.get("status", "draft"),
+                    "problem_length": len(problem),
+                    "goals_total": len(goals),
+                    "goals_filled": len(goals) - placeholder_count,
+                    "goals_placeholder": placeholder_count,
+                    "non_goals_total": len(non_goals),
+                    "non_goals_filled": sum(1 for g in non_goals if str(g).strip() not in ("待补充", "")),
+                    "missing_fields": self._spec_missing_fields(spec_data),
+                }
+
+        # P2-3: Plan/Task 摘要
+        plan_summary = None
+        plan_id = self.storage.get_current_plan_id()
+        if plan_id:
+            plan_data = self.storage.read_plan(plan_id)
+            if plan_data:
+                tasks = plan_data.get("tasks", [])
+                by_status = {"todo": 0, "contracted": 0, "implementing": 0,
+                             "verifying": 0, "reviewing": 0, "done": 0, "skipped": 0}
+                missing_contract = 0
+                for t in tasks:
+                    s = t.get("status", "todo")
+                    by_status[s] = by_status.get(s, 0) + 1
+                    if s != "skipped" and t.get("contract") is None:
+                        missing_contract += 1
+                plan_summary = {
+                    "id": plan_id,
+                    "total_tasks": len(tasks),
+                    "by_status": by_status,
+                    "missing_contract": missing_contract,
+                    "done_ratio": f"{by_status.get('done', 0)}/{len(tasks)}",
+                }
+
         return {
             "current_phase": phase,
             "current_phase_name": self.PHASE_NAMES[phase],
-            "current_spec_id": self.storage.get_current_spec_id(),
-            "current_plan_id": self.storage.get_current_plan_id(),
+            "next_phase_name": self.PHASE_NAMES[phase + 1] if phase + 1 < len(self.PHASE_NAMES) else None,
+            "current_spec_id": spec_id,
+            "current_plan_id": plan_id,
             "suspended": self.storage.is_suspended(),
             "blockers": blockers,
             "ledger_entries_count": len(self.storage.get_ledger().get("entries", [])),
+            "spec_summary": spec_summary,
+            "plan_summary": plan_summary,
         }
+
+    @staticmethod
+    def _spec_missing_fields(spec_data: dict) -> list[str]:
+        """列出 Spec 缺失/不完整的字段"""
+        missing = []
+        title = str(spec_data.get("title", "")).strip()
+        problem = str(spec_data.get("problem", "")).strip()
+        goals = spec_data.get("goals") or []
+        non_goals = spec_data.get("non_goals") or []
+        if not title or title == "draft":
+            missing.append("title")
+        if len(problem) < 10:
+            missing.append("problem (≥10 字符)")
+        if not goals:
+            missing.append("goals (≥1 项)")
+        elif all(str(g).strip() in ("待补充", "") for g in goals):
+            missing.append("goals (全部为占位「待补充」)")
+        if not non_goals:
+            missing.append("non_goals (≥1 项)")
+        return missing
 
     def run_gate(self, phase: int) -> dict:
         """执行指定阶段的门禁"""
@@ -552,15 +643,32 @@ class PhaseStateMachine:
         return {"ok": False, "message": f"未知阶段: {phase}"}
 
     def _gate_intake(self) -> dict:
+        """Intake 闸门（P2-5: 读取 sop.yaml 中 intake_gate 配置）"""
         if self.storage.get_current_spec_id() is None:
             return {"ok": False, "message": "当前无活跃 Spec，请先执行 devflow start"}
+
+        # P2-5: 读取 intake_gate 配置（若未启用或 kind 非 triage 则视为 advisory 通过）
+        intake_gate = self.config.gates.get("intake_gate")
+        if intake_gate and not intake_gate.enabled:
+            return {"ok": True, "message": "Intake 闸门已禁用，跳过"}
+
+        # 默认 require 字段（从 sop.yaml intake_gate.require 读取）
+        require_state = "ready-for-agent"
+        if intake_gate and intake_gate.kind == "triage" and intake_gate.require:
+            require_state = intake_gate.require
+
+        # 检查 ledger 是否有匹配的 triage 记录
         ledger = self.storage.get_ledger()
-        has_triage = any(e.get("action") == "triage" for e in ledger.get("entries", []))
+        has_triage = any(
+            e.get("action") == "triage" and
+            require_state in str(e.get("details", ""))
+            for e in ledger.get("entries", [])
+        )
         if has_triage:
-            return {"ok": True, "message": "Intake 闸门通过 (triage_state=ready-for-agent)"}
+            return {"ok": True, "message": f"Intake 闸门通过 (triage_state={require_state})"}
         if self.config.intake_fast_skip:
-            return {"ok": True, "message": "Intake 闸门通过 (intake_fast_skip=true，自动 ready-for-agent)"}
-        return {"ok": False, "message": "Intake 闸门未通过: triage_state != ready-for-agent"}
+            return {"ok": True, "message": f"Intake 闸门通过 (intake_fast_skip=true，自动 {require_state})"}
+        return {"ok": False, "message": f"Intake 闸门未通过: 需要 triage_state={require_state}"}
 
     def _gate_brainstorm(self) -> dict:
         spec_id = self.storage.get_current_spec_id()

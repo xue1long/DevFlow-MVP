@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -64,13 +65,24 @@ def _output(result: dict) -> None:
 
 @app.command()
 def init():
-    """初始化 DevFlow 工作区"""
+    """初始化 DevFlow 工作区
+
+    优先从 config/sop.default.yaml 读取；如不存在则使用内嵌的最小子集，
+    提示用户尽快创建配置文件（避免双份维护）。
+    """
+    import sys
     root = _get_root()
     storage = FSBackend(root)
     default_sop = root / "config" / "sop.default.yaml"
     if default_sop.exists():
         sop_content = default_sop.read_text(encoding="utf-8")
     else:
+        # P2-6: 内嵌仅作为最兜底默认；提示用户切换到配置文件
+        print(
+            "[devflow] 警告: 未找到 config/sop.default.yaml，使用内嵌最小默认。\n"
+            "        建议尽快创建独立配置文件，避免双份维护。",
+            file=sys.stderr,
+        )
         sop_content = """sop:
   sop_version: "0.1"
   phases: [intake, brainstorm, plan, contract, implement, verify, review, finish]
@@ -84,7 +96,7 @@ def init():
     intake_gate: {kind: triage, require: "ready-for-agent", blocking: true, enabled: true, bind_to_stage: 0}
     review_gate: {kind: "review", blocking: true, enabled: true, bind_to_stage: 2, max_rounds: 5, require_clear: true}
   modules: {facade: "__init__.py", forbidden_import: ["service/", "model/", "utils/internal/"]}
-  tooling: {test_runner: "pytest", import_mode: "importlib", proxy_strip: true}
+  tooling: {test_runner: "pytest", import_mode: "importlib", proxy_strip: true, command_timeout: 120}
   storage: {backend: fs, specs_dir: specs, plans_dir: plans, ledger: progress.yaml, glossary: CONTEXT.md, content_address: false}
   allow_fast_forward: false
 """
@@ -141,9 +153,20 @@ def status(all: bool = typer.Option(False, "--all", help="列出所有 Spec 状�
 
 @app.command()
 def gate(phase: int):
-    """执行指定阶段的门禁"""
+    """执行指定阶段的门禁
+    
+    阶段名称对照：
+      0=intake, 1=brainstorm, 2=plan, 3=contract,
+      4=implement, 5=verify, 6=review, 7=finish
+    """
     machine, _, _ = _get_machine()
     result = machine.run_gate(phase)
+    # P2-4: 在结果中补充阶段名称便于理解
+    if result.get("ok") is not None and "phase_name" not in result:
+        phase_names = ["intake", "brainstorm", "plan", "contract",
+                       "implement", "verify", "review", "finish"]
+        if 0 <= phase < len(phase_names):
+            result["phase_name"] = phase_names[phase]
     _output(result)
 
 

@@ -69,6 +69,12 @@ class RedLineAuditor:
         return violations
 
     def _check_cross_module_import(self) -> list[RedLineViolation]:
+        """检查跨模块导入违规
+
+        P2-8: 改用正则解析 import/from 语句，仅匹配 import 的目标模块名，
+        避免字符串匹配误报（如注释、字符串字面量）。
+        """
+        import re
         violations = []
         forbidden = self.config.modules.get("forbidden_import", [])
         if not forbidden:
@@ -76,21 +82,39 @@ class RedLineAuditor:
         src_dir = self.root / "src"
         if not src_dir.exists():
             return []
+        # 匹配 from X import Y 和 import X.Y
+        import_re = re.compile(
+            r"^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w.]+))"
+        )
         for py_file in src_dir.rglob("*.py"):
             try:
                 content = py_file.read_text(encoding="utf-8")
             except Exception:
                 continue
-            for line in content.split("\n"):
+            for lineno, line in enumerate(content.split("\n"), 1):
                 stripped = line.strip()
-                if not (stripped.startswith("from ") or stripped.startswith("import ")):
+                # 跳过注释和空行
+                if not stripped or stripped.startswith("#"):
                     continue
+                m = import_re.match(line)
+                if not m:
+                    continue
+                # 提取导入的模块路径
+                module_path = m.group(1) or m.group(2)
+                if not module_path:
+                    continue
+                # 与禁名单精确匹配（模块路径前缀命中任一禁名单）
                 for pattern in forbidden:
                     clean_pattern = pattern.rstrip("/").strip()
-                    if clean_pattern and clean_pattern in stripped:
+                    if not clean_pattern:
+                        continue
+                    # 将"service/" 转成模块路径 "service"
+                    target = clean_pattern.rstrip("/").replace("/", ".")
+                    if module_path == target or module_path.startswith(target + "."):
                         violations.append(RedLineViolation(
                             "cross_module_import",
-                            f"{py_file.relative_to(self.root)}: {stripped[:80]}（匹配禁令 '{pattern}'）",
+                            f"{py_file.relative_to(self.root)}:{lineno}: "
+                            f"import {module_path}（匹配禁令 '{pattern}'）",
                         ))
         return violations
 
