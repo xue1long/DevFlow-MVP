@@ -179,13 +179,19 @@ python -c "from devflow.storage.fs_backend import FSBackend; from pathlib import
   ✅ 仅改 graphify-out/ → hook 跳过(防重建循环)
 ```
 
-**新克隆仓库的开发者需要手动安装 hook**（hook 在本机 `.git/hooks/`，不随仓库分发）：
+**新克隆仓库的开发者需要安装 hook**（hook 在本机 `.git/hooks/`，不随仓库分发）：
 
 ```bash
-graphify hook install     # 安装 post-commit / post-checkout / merge driver
-graphify hook status      # 检查安装状态
-graphify hook uninstall   # 卸载
+python scripts/install-hooks.py       # 一键安装(推荐,跨平台)
+# 或手动: graphify hook install      # 安装 post-commit / post-checkout / merge driver
+graphify hook status                  # 检查安装状态
+graphify hook uninstall               # 卸载
 ```
+
+`scripts/install-hooks.py` 会：
+- 自动检测 graphify CLI（未装则提示 `uv tool install graphifyy`）
+- 调用 `graphify hook install`（幂等，已装则跳过）
+- 打印使用说明（手动更新/跳过/日志）
 
 **手动更新**（文档/图片变化时 hook 不触发，需手动）：
 
