@@ -179,26 +179,32 @@ python -c "from devflow.storage.fs_backend import FSBackend; from pathlib import
 
 ## 限制与残余风险
 
-详见 `审计整改台账.md`（仓库外的 `D:\5-Project\20260819\审计整改台账.md`）：
+详见 [`docs/audit-ledger.md`](./docs/audit-ledger.md)（审计整改台账）：
 
 - v0.2 残余：GateRunner 缺失时 review 门禁 fail-open、5 条红线空实现、非自动验证 fix 无真实验证、ci_green 占位、账本缺 actor/session_id、no_test 硬编码 .py、review 报告与账本无交叉校验——这些需 v0.3 处理。
 - MVP 单进程使用：账本哈希链已实现，但并发文件锁不在 MVP 范围。
 
 ## 版本
 
+详见 [`docs/CHANGELOG.md`](./docs/CHANGELOG.md)。主要版本：
+
 - **v0.1** (4cb360d)：核心状态机 + 11 个 CLI 命令
-- **v0.2** (6c642ef→96dcab8)：审核闭环 + P0/P1 安全整改
-  - d20d25e: review→fix→review 循环引擎
-  - ec42f9e: 防死循环（5 轮上限 + 停滞收敛 + 自动重验）
-  - 96dcab8: 第 3 轮审计 P0/P1 整改（账本安全 + 阶段校验 + Spec 轴真实检查）
+- **v0.2** (d20d25e / ec42f9e)：审核闭环 + 防死循环
+- **v0.2.1** (96dcab8 / 721bdff / f23acd8)：第 3 轮审计 P0/P1/P2 整改
 
 ## 相关文档
 
-- 架构设计：`../开发工作流引擎架构文档.md`
-- MVP 简报：`../DevFlow-MVP-实现简报.md`
-- 门禁降级矩阵：`../MVP-门禁降级矩阵.md`
-- v0.2 审核闭环设计：`docs/方案审核闭环-v0.2设计.md`
-- 审计整改台账：`../审计整改台账.md`
+完整索引见 [`docs/README.md`](./docs/README.md)。主要文档：
+
+- 架构设计：[`docs/devflow-architecture-v0.1.md`](./docs/devflow-architecture-v0.1.md)
+- MVP 简报：[`docs/devflow-mvp-brief.md`](./docs/devflow-mvp-brief.md)
+- 门禁降级矩阵：[`docs/mvp-gate-degradation-matrix-v0.1.md`](./docs/mvp-gate-degradation-matrix-v0.1.md)
+- v0.2 审核闭环设计：[`docs/review-loop-v0.2-design.md`](./docs/review-loop-v0.2-design.md)
+- 首轮审计报告：[`docs/devflow-first-audit-report-v0.1.md`](./docs/devflow-first-audit-report-v0.1.md)
+- 审计流程提示词：[`docs/audit-prompt-template-v0.1.md`](./docs/audit-prompt-template-v0.1.md)
+- 文档规范：[`docs/DOCS_GUIDELINES.md`](./docs/DOCS_GUIDELINES.md)
+- 变更日志：[`docs/CHANGELOG.md`](./docs/CHANGELOG.md)
+- 审计整改台账：[`docs/audit-ledger.md`](./docs/audit-ledger.md)
 
 ## License
 
