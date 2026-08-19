@@ -86,6 +86,10 @@ devflow history
 | `devflow review [spec-id]` | 2+ | 执行双轴评审 |
 | `devflow fix <vid...> [--residual]` | * | 修复 / 登记违规 |
 | `devflow history [spec-id]` | * | 查看审核历史 |
+| `devflow archive [spec-id] [--reason]` | * | 归档 Spec（设置 status=archived）|
+| `devflow list-active` | * | 列出活跃（未归档）Spec |
+| `devflow list-archived` | * | 列出已归档 Spec |
+| `devflow find <关键词> [--all]` | * | 跨 Spec/Plan/Review 文件搜索 |
 
 ## 阶段对照表
 

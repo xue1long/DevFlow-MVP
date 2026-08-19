@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 class SpecStatus(str, Enum):
     DRAFT = "draft"
     APPROVED = "approved"
+    ARCHIVED = "archived"  # v0.3 第一性方案：标记已完成/已取消的 Spec
 
 
 class Spec(BaseModel):

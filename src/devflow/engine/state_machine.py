@@ -146,8 +146,7 @@ class PhaseStateMachine:
 
         new_phase = phase + 1
         if new_phase >= len(self.PHASE_NAMES):
-            # v0.3 第一性方案：进入 finish 时自动触发软归档
-            return self._archive_on_finish()
+            return {"ok": True, "phase": phase, "message": "工作流已完成（已在 finish 阶段）"}
 
         self.storage.set_current_phase(new_phase)
         self.storage.append_ledger(LedgerEntry(
@@ -775,36 +774,6 @@ class PhaseStateMachine:
                 if not_done:
                     return {"ok": False, "message": f"以下 Task 未完成: {not_done}"}
         return {"ok": True, "message": "账本完整，所有 Task 已完成"}
-
-    def _archive_on_finish(self) -> dict:
-        """v0.3 第一性方案：进入 finish 时软归档活跃 Spec
-
-        不移动文件，仅在 ledger.yaml 的 archive 段添加记录。
-        保留文件原位便于用户后续查看与查阅。
-        """
-        phase = self.current_phase
-        spec_id = self.storage.get_current_spec_id()
-
-        # 调用 storage 软归档接口
-        archive_record = None
-        if spec_id and hasattr(self.storage, "archive_spec"):
-            archive_record = self.storage.archive_spec(
-                spec_id=spec_id,
-                reason="completed via devflow finish (Stage 7)",
-                final_stage=phase,
-            )
-            self.storage.append_ledger(LedgerEntry(
-                phase=phase,
-                action=LedgerAction.PHASE_TRANSITION,
-                details=f"工作流完成，Spec '{spec_id}' 已软归档（文件保留原位）",
-            ))
-        return {
-            "ok": True,
-            "phase": phase,
-            "message": f"工作流已完成（Stage{phase} finish），Spec '{spec_id}' 已软归档",
-            "archived": archive_record is not None,
-            "archive_record": archive_record,
-        }
 
     # --- Task 状态推进 ---
 

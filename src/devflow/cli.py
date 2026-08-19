@@ -294,64 +294,154 @@ def history(
     _output(result)
 
 
-# --- v0.3 增强命令：软归档 + 跨文件查询（第一性方案） ---
+# --- v0.3 第一性方案：最简版（Spec 文件内 status 字段） ---
 
 
 @app.command()
 def archive(
     spec_id: Optional[str] = typer.Argument(None, help="Spec ID，默认当前活跃 Spec"),
-    reason: str = typer.Option(..., "--reason", "-r", help="归档原因（必填）"),
+    reason: str = typer.Option("", "--reason", "-r", help="归档原因（可选，写入账本）"),
 ):
-    """软归档 Spec（文件保留原位，仅在账本标记状态）"""
-    storage = FSBackend(_get_root())
+    """归档 Spec（设置 status=archived + 写账本）
+
+    第一性方案：文件内 status 字段标记归档，零新接口、零账本新段。
+    """
+    from devflow.model.spec import Spec, SpecStatus
+    from datetime import datetime
+
+    root = _get_root()
+    storage = FSBackend(root)
     if spec_id is None:
         spec_id = storage.get_current_spec_id()
         if spec_id is None:
             _output({"ok": False, "message": "未指定 Spec ID 且当前无活跃 Spec"})
             return
-    record = storage.archive_spec(spec_id, reason=reason)
+
+    spec_path = storage.specs_dir / f"{spec_id}.yaml"
+    spec_data = storage.read_spec(spec_id)
+    if spec_data is None:
+        _output({"ok": False, "message": f"Spec '{spec_id}' 不存在"})
+        return
+
+    if spec_data.get("status") == "archived":
+        _output({"ok": False, "message": f"Spec '{spec_id}' 已归档（不可重复归档）"})
+        return
+
+    # 更新 Spec YAML：status 字段
+    spec_data["status"] = SpecStatus.ARCHIVED.value
+    storage.write_spec(spec_id, spec_data)
+
+    # 写账本（追加 ledger entry）
+    from devflow.model.ledger import LedgerEntry, LedgerAction
+    storage.append_ledger(LedgerEntry(
+        phase=storage.get_current_phase(),
+        action=LedgerAction.PHASE_TRANSITION,
+        details=f"归档 Spec '{spec_id}'" + (f"（原因：{reason}）" if reason else ""),
+    ))
+
     _output({
         "ok": True,
-        "message": f"Spec '{spec_id}' 已软归档（文件保留原位）",
-        "archive_record": record,
-    })
-
-
-@app.command(name="list-archived")
-def list_archived():
-    """列出所有已归档的 Spec"""
-    storage = FSBackend(_get_root())
-    items = storage.list_archived_specs()
-    _output({
-        "ok": True,
-        "total": len(items),
-        "items": items,
+        "message": f"Spec '{spec_id}' 已归档（status=archived）",
+        "spec_id": spec_id,
+        "archived_at": datetime.now().isoformat(),
     })
 
 
 @app.command(name="list-active")
 def list_active():
-    """列出活跃（未归档）的 Spec ID"""
-    storage = FSBackend(_get_root())
-    items = storage.list_active_specs()
-    _output({
-        "ok": True,
-        "total": len(items),
-        "spec_ids": items,
-    })
+    """列出活跃 Spec（status != archived）"""
+    root = _get_root()
+    storage = FSBackend(root)
+    active = []
+    for spec_path in storage.specs_dir.glob("*.yaml"):
+        data = storage.read_spec(spec_path.stem)
+        if data is None:
+            continue
+        if data.get("status") != "archived":
+            active.append({
+                "spec_id": spec_path.stem,
+                "title": data.get("title", ""),
+                "status": data.get("status", "draft"),
+            })
+    _output({"ok": True, "total": len(active), "specs": active})
+
+
+@app.command(name="list-archived")
+def list_archived():
+    """列出已归档 Spec（status=archived）"""
+    root = _get_root()
+    storage = FSBackend(root)
+    archived = []
+    for spec_path in storage.specs_dir.glob("*.yaml"):
+        data = storage.read_spec(spec_path.stem)
+        if data is None:
+            continue
+        if data.get("status") == "archived":
+            archived.append({
+                "spec_id": spec_path.stem,
+                "title": data.get("title", ""),
+            })
+    _output({"ok": True, "total": len(archived), "specs": archived})
 
 
 @app.command()
 def find(
-    keyword: str = typer.Argument("", help="搜索关键词（留空列出所有）"),
+    keyword: str = typer.Argument(..., help="搜索关键词"),
     include_archived: bool = typer.Option(False, "--all", help="包含已归档 Spec"),
 ):
     """跨 Spec/Plan/Review 文件搜索关键词
 
-    空关键词时列出全部 Spec（按 archive 过滤）。
+    第一性方案：用 Python 直接扫描文件，无需新建索引。
     """
-    storage = FSBackend(_get_root())
-    results = storage.query(keyword=keyword, include_archived=include_archived)
+    root = _get_root()
+    storage = FSBackend(root)
+    results = []
+    keyword_lower = keyword.lower()
+
+    for spec_path in storage.specs_dir.glob("*.yaml"):
+        spec_id = spec_path.stem
+        data = storage.read_spec(spec_id)
+        if data is None:
+            continue
+        # 默认跳过已归档
+        if data.get("status") == "archived" and not include_archived:
+            continue
+
+        matches = []
+        # Spec 文件
+        try:
+            if keyword_lower in spec_path.read_text(encoding="utf-8").lower():
+                matches.append("spec")
+        except OSError:
+            pass
+
+        # Plan 文件
+        plan_path = storage.plans_dir / f"plan-{spec_id}.yaml"
+        if plan_path.exists():
+            try:
+                if keyword_lower in plan_path.read_text(encoding="utf-8").lower():
+                    matches.append(f"plan:{plan_path.name}")
+            except OSError:
+                pass
+
+        # Review 文件
+        review_dir = root / "review" / spec_id
+        if review_dir.exists():
+            for r_file in review_dir.glob("*.yaml"):
+                try:
+                    if keyword_lower in r_file.read_text(encoding="utf-8").lower():
+                        matches.append(f"review:{r_file.name}")
+                except OSError:
+                    pass
+
+        if matches:
+            results.append({
+                "spec_id": spec_id,
+                "title": data.get("title", ""),
+                "status": data.get("status", "draft"),
+                "match_locations": matches,
+            })
+
     _output({
         "ok": True,
         "keyword": keyword,

@@ -6,21 +6,23 @@
 
 ## [Unreleased]
 
-### Planned（v0.3 设计中，未实施）
-- **工作区布局重构**：运行时产物统一迁入 `doc/devflow-workspace/` 子目录（已评估，改用第一性方案）
-- 详见 [`docs/workspace-layout-v0.1.md`](./workspace-layout-v0.1.md)（**第一性方案替代**）
-
 ### Added
-- **v0.3 第一性方案：INDEX + 软归档 + 跨文件搜索**（替代全量路径迁移）
-  - 新增 `StorageBackend.archive_spec()` / `list_archived_specs()` / `list_active_specs()` / `query()` 接口
-  - 新增 CLI：`devflow archive` / `devflow list-archived` / `devflow list-active` / `devflow find`
-  - `devflow finish`（Stage 7）自动触发软归档
-  - 详见 [`docs/INDEX_FORMAT.md`](./INDEX_FORMAT.md)
-- 新增 `tests/test_archive_index.py`（10 条验证测试）
+- **v0.3 第一性方案（最简版）**：Spec 文件内 `status` 字段标记归档
+  - `SpecStatus` 新增 `ARCHIVED = "archived"`
+  - 新增 CLI：`devflow archive` / `devflow list-active` / `devflow list-archived` / `devflow find`
+  - **零新接口**：完全用现有 `FSBackend.read_spec/write_spec`
+  - **零账本新段**：归档只追加 ledger entry（不修改 entries 哈希链）
+  - 撤销归档：手动改 `status` 字段即可，无需专门 unarchive 命令
+  - 详见 [`docs/first-principles-sop.md`](./first-principles-sop.md) §4 实战案例
+- 新增 `tests/test_simple_archive.py`（11 条验证测试）
 - **第一性原理 SOP** 文档：详见 [`docs/first-principles-sop.md`](./first-principles-sop.md)
-  - 4 阶段元方法（方案/评审/整改/复核）
-  - 5 步拆解 + 质疑话术 + 验证话术
-  - 实战案例：v0.3 工作区布局的第一性分析
+- `docs/v0.3-rejected-design.md`（5 角色评审归档档案）
+
+### Removed
+- **回退 v0.3 INDEX 复杂方案**（commit `f49af51`）：代码 + 测试 + INDEX_FORMAT.md
+  - 原因：5 角色独立评审发现 21 项问题（含 1 项 [F] 强质疑）
+  - 第一性质疑者结论：方案跳过最简替代（Spec 文件内 `status` 字段）
+  - 替代：最简方案（11 行实现 vs 原 600+ 行）
 
 ### Changed
 - （暂无）

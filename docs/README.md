@@ -9,7 +9,8 @@
 | [README.md](../README.md) | 上手指南 | — | 安装、5 分钟上手、CLI 速查、架构图 |
 | [DOCS_GUIDELINES.md](./DOCS_GUIDELINES.md) | 规范 | v0.1 | 文档命名 + 归档 + 版本号约定 |
 | [workspace-layout-v0.1.md](./workspace-layout-v0.1.md) | 设计 | v0.3 第一性方案 | 用户项目内 DevFlow 工作区目录结构（评审后采用 INDEX 替代） |
-| [INDEX_FORMAT.md](./INDEX_FORMAT.md) | 设计 | v0.3 | 软归档 + 跨文件查询（INDEX 方案） |
+| [v0.3-rejected-design.md](./v0.3-rejected-design.md) | 评审档案 | v0.3 | INDEX 复杂方案被 5 角色评审拒绝（已替代） |
+| [first-principles-sop.md](./first-principles-sop.md) | 元方法 | v0.1 | 第一性原理 4 阶段实践 |
 | [CHANGELOG.md](./CHANGELOG.md) | 变更日志 | — | v0.1 / v0.2 / v0.2.1 + Unreleased |
 
 ## 设计文档
@@ -39,16 +40,16 @@ devflow/
 │   ├── README.md          ← 本文件（索引）
 │   ├── DOCS_GUIDELINES.md ← 文档规范
 │   ├── workspace-layout-v0.1.md
+│   ├── v0.3-rejected-design.md ← INDEX 方案评审档案
+│   ├── first-principles-sop.md
 │   ├── CHANGELOG.md       ← 变更日志
 │   ├── audit-ledger.md    ← 审计整改台账
 │   ├── audit-prompt-template-v0.1.md
-│   ├── first-principles-sop.md
 │   ├── devflow-architecture-v0.1.md
 │   ├── devflow-mvp-brief.md
 │   ├── devflow-first-audit-report-v0.1.md
 │   ├── mvp-gate-degradation-matrix-v0.1.md
-│   ├── review-loop-v0.2-design.md
-│   └── workspace-layout-v0.1.md
+│   └── review-loop-v0.2-design.md
 ├── src/devflow/           ← 源代码
 ├── tests/                 ← 测试
 ├── config/                ← SOP 默认配置
