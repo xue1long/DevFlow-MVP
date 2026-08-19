@@ -8,6 +8,8 @@
 |------|------|------|------|
 | [README.md](../README.md) | 上手指南 | — | 安装、5 分钟上手、CLI 速查、架构图 |
 | [DOCS_GUIDELINES.md](./DOCS_GUIDELINES.md) | 规范 | v0.1 | 文档命名 + 归档 + 版本号约定 |
+| [thinking-framework-guide.md](./thinking-framework-guide.md) | 指南 | v1.0 | 模块×思维匹配手册：9 类模块 × 主辅反思维组合 |
+| [thinking-framework-mapping.md](./thinking-framework-mapping.md) | 指南 | v1.0 | 24 思维 × DevFlow 引擎机制映射（落地状态追踪） |
 | [workspace-layout-v0.1.md](./workspace-layout-v0.1.md) | 设计 | v0.3 第一性方案 | 用户项目内 DevFlow 工作区目录结构（评审后采用 INDEX 替代） |
 | [v0.3-rejected-design.md](./v0.3-rejected-design.md) | 评审档案 | v0.3 | INDEX 复杂方案被 5 角色评审拒绝（已替代） |
 | [first-principles-sop.md](./first-principles-sop.md) | 元方法 | v0.1 | 第一性原理 4 阶段实践 |
@@ -39,6 +41,8 @@ devflow/
 ├── docs/                  ← 本目录
 │   ├── README.md          ← 本文件（索引）
 │   ├── DOCS_GUIDELINES.md ← 文档规范
+│   ├── thinking-framework-guide.md   ← 模块×思维匹配手册
+│   ├── thinking-framework-mapping.md ← 24 思维 × 引擎机制映射
 │   ├── workspace-layout-v0.1.md
 │   ├── v0.3-rejected-design.md ← INDEX 方案评审档案
 │   ├── first-principles-sop.md
