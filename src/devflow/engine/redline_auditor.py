@@ -304,3 +304,20 @@ class RedLineAuditor:
             skip=True,
             status=ViolationStatus.STUB,
         )]
+
+    def implemented_rule_names(self) -> list[str]:
+        """v0.3.3: 返回已实现自动检测的红线名称列表
+
+        供 audit 输出展示"检测覆盖度"使用。stub/not_implemented 不算已实现。
+        """
+        implemented = []
+        for red_line in self.config.red_lines:
+            if red_line.mvp_skip:
+                continue
+            checker = getattr(self, f"_check_{red_line.name}", None)
+            if checker is None:
+                continue
+            result = checker()
+            if result:
+                implemented.append(red_line.name)
+        return implemented
