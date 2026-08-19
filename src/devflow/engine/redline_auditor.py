@@ -2,6 +2,9 @@
 
 MVP 实现 10 条可自动检测的红线 + 1 条 circular_dep 标记 mvp_skip。
 依赖 GitPort 抽象接口，不直接调 subprocess。
+
+v0.3.3: 支持 ViolationStatus 枚举(active/mvp_skip/stub/not_implemented)
+与语言中性化(tooling.languages 配置驱动, 词边界正则防误判)。
 """
 from __future__ import annotations
 
