@@ -4,6 +4,18 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Added
+- **知识图谱（graphify）**：README 新增「知识图谱」章节——graphify-out/ 产物说明、commit hook 自动更新说明（新克隆仓库需 `graphify hook install`）、手动更新/跳过/日志方法
+- `RedLineAuditor.implemented_rule_names()`：返回已实现自动检测的红线名称列表（audit 覆盖度展示用）
+
+### Changed
+- README 头部版本号 v0.2 → v0.3.3；测试数量 76 → 121；架构图红线描述更新（11 红线 + 9 思维检查）
+- README「限制与残余风险」更新：标记 v0.3.x 已修复项,残余 P1 指向 audit-ledger
+
+---
+
 ## [v0.3.3] - 2026-08-19（思维模型落地）
 
 > **来源**：用户需求——"项目吸收思维模型,应用到实际工作"。将 9 种职场思维变成引擎的**默认规则**(字段 + 检查),而非依赖 agent 自觉。

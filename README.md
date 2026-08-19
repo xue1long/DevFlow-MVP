@@ -1,12 +1,13 @@
 # DevFlow — 方案驱动开发工作流引擎
 
-> **MVP v0.2** — 给 AI Agent 用的强制流程引擎：8 阶段不可跳步，逐阶段出口门禁，双轴评审闭环，append-only 可审计账本。
+> **v0.3.3** — 给 AI Agent 用的流程引擎：8 阶段不可跳步，逐阶段出口门禁，双轴评审闭环，append-only 可审计账本，9 条思维模型检查内置。
 
 ## 核心特性
 
 - **8 阶段强制流水线**：`intake → brainstorm → plan → contract → implement → verify → review → finish`
 - **逐阶段出口门禁**：tests_pass / ci_green / intake_gate / review_gate
 - **审核闭环（v0.2）**：双轴评审 Standards × Spec，自动验证 + 防死循环（最多 5 轮）
+- **思维模型检查（v0.3.3）**：9 条思维规则内置（第一性原理/逆向/损益/奥卡姆/假设/二八/能力圈/反馈/冗余），宽松默认，MINOR 提示不阻断
 - **append-only 账本**：进度账本带 SHA256 哈希链 + 文件锁，可检测篡改
 - **可审计**：每个决策都有记录，账本可追溯、可验证完整性
 - **可迁移**：StorageBackend / GitPort / ReviewEngine 抽象接口，支持后端扩展
@@ -143,15 +144,60 @@ sop:
 ## 测试
 
 ```bash
-# 全部测试（76 passed / 1 skipped）
+# 全部测试（121 passed / 1 skipped）
 python -m pytest tests/ -v
 
 # 仅 P0/P1 整改验证测试（12 个）
 python -m pytest tests/test_p0_fixes.py -v
 
+# 思维模型落地验证（9 条）
+python -m pytest tests/test_thinking_rules.py -v
+
 # 验证账本哈希链完整性
 python -c "from devflow.storage.fs_backend import FSBackend; from pathlib import Path; print(FSBackend(Path('.'))).verify_ledger()"
 ```
+
+## 知识图谱（graphify）
+
+> DevFlow 仓库维护一个可查询的知识图谱（`graphify-out/`），用于代码导航、社区发现、跨模块关联分析。
+
+### 图谱是什么
+
+- **产物**：`graphify-out/graph.json`（图谱数据）/ `graph.html`（交互可视化）/ `GRAPH_REPORT.md`（审计报告）
+- **覆盖**：`src/` 代码 + `docs/` 文档 + `tests/` 测试
+- **用途**：`/graphify query "..."` 问代码库问题、`/graphify path A B` 找模块间最短路径、社区发现找跨模块关联
+
+### 自动更新（commit hook）
+
+仓库已安装 graphify post-commit hook：**每次 `git commit` 后自动增量重建图谱**（仅代码变化触发，后台运行不阻塞 commit）。
+
+```
+行为:
+  ✅ commit 改代码     → hook 自动重建(1237→1244 nodes 实测)
+  ✅ commit 只改注释    → hook 检测无拓扑变化,跳过
+  ✅ rebase/merge      → hook 自动跳过(避免阻塞 --continue)
+  ✅ 仅改 graphify-out/ → hook 跳过(防重建循环)
+```
+
+**新克隆仓库的开发者需要手动安装 hook**（hook 在本机 `.git/hooks/`，不随仓库分发）：
+
+```bash
+graphify hook install     # 安装 post-commit / post-checkout / merge driver
+graphify hook status      # 检查安装状态
+graphify hook uninstall   # 卸载
+```
+
+**手动更新**（文档/图片变化时 hook 不触发，需手动）：
+
+```bash
+graphify update .         # 增量重建(代码+文档,无 LLM 开销)
+```
+
+**跳过 hook**（紧急提交时）：`GRAPHIFY_SKIP_HOOK=1 git commit`
+
+**重建日志**：`~/.cache/graphify-rebuild.log`（排查 hook 问题用）
+
+**注意**：`graphify-out/` 已被 `.gitignore` 忽略（本地派生物不入库）；`graph.json` 冲突时用 gitattributes 的 `merge=graphify` union-merge 处理。
 
 ## 架构
 
@@ -162,7 +208,7 @@ python -c "from devflow.storage.fs_backend import FSBackend; from pathlib import
 │  engine/                                            │
 │    ├─ state_machine.py (8 阶段状态机)                │
 │    ├─ review_engine.py (双轴评审 + 防死循环)         │
-│    ├─ redline_auditor.py (11 条红线)                 │
+│    ├─ redline_auditor.py (11 条红线 + 9 条思维检查)   │
 │    └─ checkpoint.py / skill_resolver.py             │
 ├─────────────────────────────────────────────────────┤
 │  model/                                              │  纯 pydantic v2 数据
@@ -185,7 +231,8 @@ python -c "from devflow.storage.fs_backend import FSBackend; from pathlib import
 
 详见 [`docs/audit-ledger.md`](./docs/audit-ledger.md)（审计整改台账）：
 
-- v0.2 残余：GateRunner 缺失时 review 门禁 fail-open、5 条红线空实现、非自动验证 fix 无真实验证、ci_green 占位、账本缺 actor/session_id、no_test 硬编码 .py、review 报告与账本无交叉校验——这些需 v0.3 处理。
+- v0.3.x 已修复：review 门禁默认禁用占位 ci_green（P1-2）、stub 红线显式标注（P1-5）、ci-status 命令（P1-9）、语言中性化（P1-11）、门禁结果持久化（P2-14）、timestamp 时区化（P2-17）、9 条思维模型检查（v0.3.3）。
+- 残余 P1：账本缺 actor/session_id（P1-10，v0.4 待做）、review 报告与账本无交叉校验（P1-13，单 spec 版已落地，多 spec 待 v0.4）——详见 audit-ledger 第 3/5/6 轮。
 - MVP 单进程使用：账本哈希链已实现，但并发文件锁不在 MVP 范围。
 
 ## 版本
