@@ -7,12 +7,15 @@
 ## [Unreleased]
 
 ### Added
-- **知识图谱（graphify）**：README 新增「知识图谱」章节——graphify-out/ 产物说明、commit hook 自动更新说明（新克隆仓库需 `graphify hook install`）、手动更新/跳过/日志方法
 - `RedLineAuditor.implemented_rule_names()`：返回已实现自动检测的红线名称列表（audit 覆盖度展示用）
 
 ### Changed
 - README 头部版本号 v0.2 → v0.3.3；测试数量 76 → 121；架构图红线描述更新（11 红线 + 9 思维检查）
 - README「限制与残余风险」更新：标记 v0.3.x 已修复项,残余 P1 指向 audit-ledger
+- README「知识图谱」章节精简：移除 commit hook 自动更新说明（已撤回），保留图谱产物与手动更新方法
+
+### Removed
+- **撤回 graphify 自动更新配置**：commit hook（post-commit / post-checkout / merge driver）已卸载；`scripts/install-hooks.py`、`.gitattributes`、`devflow init` 集成及 `tests/test_v034_init_hooks.py` 已回滚
 
 ---
 

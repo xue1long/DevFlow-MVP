@@ -161,43 +161,11 @@ python -c "from devflow.storage.fs_backend import FSBackend; from pathlib import
 
 > DevFlow 仓库维护一个可查询的知识图谱（`graphify-out/`），用于代码导航、社区发现、跨模块关联分析。
 
-### 图谱是什么
-
 - **产物**：`graphify-out/graph.json`（图谱数据）/ `graph.html`（交互可视化）/ `GRAPH_REPORT.md`（审计报告）
 - **覆盖**：`src/` 代码 + `docs/` 文档 + `tests/` 测试
 - **用途**：`/graphify query "..."` 问代码库问题、`/graphify path A B` 找模块间最短路径、社区发现找跨模块关联
-
-### 自动更新（commit hook）
-
-仓库已安装 graphify post-commit hook：**每次 `git commit` 后自动增量重建图谱**（仅代码变化触发，后台运行不阻塞 commit）。
-
-```
-行为:
-  ✅ commit 改代码     → hook 自动重建(1237→1244 nodes 实测)
-  ✅ commit 只改注释    → hook 检测无拓扑变化,跳过
-  ✅ rebase/merge      → hook 自动跳过(避免阻塞 --continue)
-  ✅ 仅改 graphify-out/ → hook 跳过(防重建循环)
-```
-
-**新克隆仓库的开发者需要手动安装 hook**（hook 在本机 `.git/hooks/`，不随仓库分发）：
-
-```bash
-graphify hook install     # 安装 post-commit / post-checkout / merge driver
-graphify hook status      # 检查安装状态
-graphify hook uninstall   # 卸载
-```
-
-**手动更新**（文档/图片变化时 hook 不触发，需手动）：
-
-```bash
-graphify update .         # 增量重建(代码+文档,无 LLM 开销)
-```
-
-**跳过 hook**（紧急提交时）：`GRAPHIFY_SKIP_HOOK=1 git commit`
-
-**重建日志**：`~/.cache/graphify-rebuild.log`（排查 hook 问题用）
-
-**注意**：`graphify-out/` 已被 `.gitignore` 忽略（本地派生物不入库）；`graph.json` 冲突时用 gitattributes 的 `merge=graphify` union-merge 处理。
+- **手动更新**：`graphify update .`（增量重建，无 LLM 开销）
+- **注意**：`graphify-out/` 已被 `.gitignore` 忽略（本地派生物不入库）
 
 ## 架构
 
