@@ -159,7 +159,7 @@ def gate(phase: int):
       0=intake, 1=brainstorm, 2=plan, 3=contract,
       4=implement, 5=verify, 6=review, 7=finish
     """
-    machine, _, _ = _get_machine()
+    machine, storage, _ = _get_machine()
     result = machine.run_gate(phase)
     # P2-4: 在结果中补充阶段名称便于理解
     if result.get("ok") is not None and "phase_name" not in result:
@@ -167,7 +167,53 @@ def gate(phase: int):
                        "implement", "verify", "review", "finish"]
         if 0 <= phase < len(phase_names):
             result["phase_name"] = phase_names[phase]
+
+    # v0.3.2 P2-14: 门禁结果持久化到账本(含 stdout/stderr 尾部脱敏)
+    if storage is not None:
+        try:
+            from .model.ledger import LedgerEntry, LedgerAction
+            storage.append_ledger(LedgerEntry(
+                phase=phase,
+                action=LedgerAction.GATE,
+                details=f"门禁 {result.get('phase_name', phase)}: {result.get('message', '')[:100]}",
+                gate_result=_sanitize_gate_result(result),
+            ))
+        except Exception:
+            # 门禁结果持久化失败不应阻断 gate 命令本身
+            result["ledger_note"] = "门禁结果写入账本失败(不影响门禁结果)"
     _output(result)
+
+
+def _sanitize_gate_result(result: dict) -> dict:
+    """v0.3.2 P2-14: 提取门禁结果到账本,stdout/stderr 尾部脱敏
+
+    - 只保留尾部 300 字符
+    - 过滤 ANSI 颜色码
+    - 过滤疑似敏感内容(密钥/密码/token)
+    """
+    import re as _re
+
+    def _clean(text: str, limit: int = 300) -> str:
+        if not text:
+            return ""
+        # 去掉 ANSI 颜色码
+        cleaned = _re.sub(r"\x1b\[[0-9;]*m", "", text)
+        # 截尾
+        cleaned = cleaned[-limit:]
+        # 脱敏:疑似密钥/密码/token
+        cleaned = _re.sub(
+            r"(?i)((?:key|secret|token|password|passwd|pwd)\s*[=:]\s*)([^\s,;]+)",
+            r"\1***",
+            cleaned,
+        )
+        return cleaned
+
+    return {
+        "ok": result.get("ok"),
+        "message": str(result.get("message", ""))[:200],
+        "stdout_tail": _clean(result.get("stdout", "")),
+        "stderr_tail": _clean(result.get("stderr", "")),
+    }
 
 
 @app.command()
@@ -210,8 +256,19 @@ def audit():
             "configured": len(config.red_lines),
             "real_violations": len(real),
             "skipped_mvp_or_stub": len(skipped),
+            # v0.3.2 P1-5 补强:按结构化 status 统计
+            "by_status": _count_by_status(violations),
         },
     })
+
+
+def _count_by_status(violations) -> dict:
+    """v0.3.2 P1-5 补强: 按 ViolationStatus 枚举统计"""
+    from .engine.redline_auditor import ViolationStatus
+    counts = {s.value: 0 for s in ViolationStatus}
+    for v in violations:
+        counts[v.status.value] = counts.get(v.status.value, 0) + 1
+    return counts
 
 
 @app.command(name="ci-status")

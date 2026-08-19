@@ -616,3 +616,35 @@ RFC 把 50%+ 工期（分代哈希 3d + 接口拆分 2d）投在 5-10% 用户价
 无（仅作审计归档，未实施代码修改）。
 
 ---
+
+## v0.3.2 实施结果（轻量修补）
+
+> **决策**：接受第 6 轮审计结论——v0.4 RFC 整体回退；**先落地审计确认保留的 4 项低风险修补（v0.3.2），v0.4 暂停等真正需求**。
+
+| 修补 | 落地内容 | 验证 |
+|---|---|---|
+| **P2-14** | 门禁结果持久化：`gate` 命令写账本,`LedgerEntry.gate_result` 可选字段 + stdout/stderr 脱敏 | ✅ 测试锁定（test_p2_14 ×3） |
+| **P2-17** | timestamp 时区化：`datetime.now(timezone.utc)`,旧 naive 读取兼容 | ✅ 测试锁定（test_p2_17 ×2） |
+| **P1-11** | 语言中性化：`tooling.languages` 配置驱动,词边界正则防误判 | ✅ 测试锁定（test_p1_11 ×3） |
+| **P1-5 补强** | `ViolationStatus` 枚举(active/mvp_skip/stub/not_implemented)+ audit() 结构化 status | ✅ 测试锁定（test_p1_5 ×3） |
+
+**改动文件**：
+- `src/devflow/model/ledger.py`（P2-17 + P2-14 字段）
+- `src/devflow/cli.py`（gate 持久化 + _sanitize_gate_result + audit by_status）
+- `src/devflow/engine/redline_auditor.py`（ViolationStatus 枚举 + 语言中性化）
+- `config/sop.default.yaml`（tooling.languages）
+- `tests/test_v032.py`（11 条新测试）
+- `docs/CHANGELOG.md`（[v0.3.2] 段）
+
+**全量回归**：**111 passed / 1 skipped**（v0.3.1-r2 基线 100 + 新 11）
+
+**哈希链安全验证**：
+- `verify_ledger` 读原始 YAML dict 直接验证（不经过 pydantic 模型）→ 新增 Optional 字段仅影响新条目哈希,旧链验证不变
+- `test_p2_14_hash_chain_still_valid_with_gate_result` 锁定该行为
+
+**v0.4 暂停项（等真正需求）**：
+- 账本 schema 演进（actor/session_id/review_ref/spec_id）
+- StorageBackend 接口拆分（YAGNI）
+- 多 spec 双向 JOIN 完整版（NP0-2 需 v0.4 从根解决）
+
+---

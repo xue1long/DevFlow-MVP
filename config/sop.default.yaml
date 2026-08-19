@@ -55,6 +55,11 @@ sop:
     test_runner: "pytest"
     import_mode: "importlib"
     proxy_strip: true
+    # v0.3.2 P1-11: 语言中性化配置(缺省回退 .py)
+    languages:
+      code_extensions: [".py", ".ts", ".go"]
+      test_patterns: ["test", "_test", ".spec."]
+      test_extensions: [".test.py", "_test.py", ".test.ts", "_test.ts", ".test.go", "_test.go"]
   storage:
     backend: fs
     specs_dir: specs

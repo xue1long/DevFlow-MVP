@@ -5,6 +5,7 @@ MVP 实现 10 条可自动检测的红线 + 1 条 circular_dep 标记 mvp_skip�
 """
 from __future__ import annotations
 
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -12,15 +13,39 @@ from ..policy.loader import SOPConfig
 from ..storage.git_port import GitPort
 
 
+class ViolationStatus(str, Enum):
+    """v0.3.2 P1-5 补强: 红线违规状态枚举
+
+    active:          真实违规(需修复)
+    mvp_skip:        sop.yaml 配置 mvp_skip: true 跳过
+    stub:            checker 存在但实现为空(未自动检测)
+    not_implemented: 无对应 checker 方法(未实现)
+    """
+    ACTIVE = "active"
+    MVP_SKIP = "mvp_skip"
+    STUB = "stub"
+    NOT_IMPLEMENTED = "not_implemented"
+
+
 class RedLineViolation:
-    """红线违规"""
-    def __init__(self, rule: str, message: str, skip: bool = False):
+    """红线违规
+
+    v0.3.2 P1-5 补强: 增加 status 枚举字段,替代仅靠 skip 布尔+message 文本。
+    """
+    def __init__(self, rule: str, message: str, skip: bool = False,
+                 status: ViolationStatus = ViolationStatus.ACTIVE):
         self.rule = rule
         self.message = message
         self.skip = skip
+        self.status = status
 
     def to_dict(self) -> dict:
-        return {"rule": self.rule, "message": self.message, "skip": self.skip}
+        return {
+            "rule": self.rule,
+            "message": self.message,
+            "skip": self.skip,
+            "status": self.status.value,
+        }
 
 
 class RedLineAuditor:
@@ -32,7 +57,10 @@ class RedLineAuditor:
         self.git = git
 
     def audit(self) -> list[RedLineViolation]:
-        """执行全量红线扫描"""
+        """执行全量红线扫描
+
+        v0.3.2 P1-5 补强: 为每条违规标注结构化 status 枚举。
+        """
         violations: list[RedLineViolation] = []
         for red_line in self.config.red_lines:
             if red_line.mvp_skip:
@@ -40,12 +68,71 @@ class RedLineAuditor:
                     red_line.name,
                     f"红线 '{red_line.name}' 在 MVP 中跳过检测",
                     skip=True,
+                    status=ViolationStatus.MVP_SKIP,
                 ))
                 continue
             checker = getattr(self, f"_check_{red_line.name}", None)
-            if checker:
-                violations.extend(checker())
+            if checker is None:
+                violations.append(RedLineViolation(
+                    red_line.name,
+                    f"红线 '{red_line.name}' 缺少自动检测实现",
+                    skip=True,
+                    status=ViolationStatus.NOT_IMPLEMENTED,
+                ))
+                continue
+            result = checker()
+            if not result:
+                violations.append(RedLineViolation(
+                    red_line.name,
+                    f"红线 '{red_line.name}' 检测实现为 stub(未自动检测)",
+                    skip=True,
+                    status=ViolationStatus.STUB,
+                ))
+                continue
+            violations.extend(result)
         return violations
+
+    def _get_language_config(self) -> dict:
+        """v0.3.2 P1-11: 从 sop.yaml tooling.languages 读取语言配置
+
+        缺省回退到旧默认值(仅 .py,兼容旧 sop.yaml)。
+        """
+        langs = self.config.tooling.get("languages", {})
+        return {
+            "code_extensions": langs.get("code_extensions", [".py"]),
+            "test_patterns": langs.get("test_patterns", ["test", "_test", ".spec."]),
+            "test_extensions": langs.get("test_extensions", None),
+        }
+
+    def _is_test_file(self, filename: str, cfg: dict) -> bool:
+        """v0.3.2 P1-11: 判断文件是否为测试文件
+
+        同时检查精确后缀(test_extensions)与命名模式(test_patterns):
+        - test_extensions 精确匹配(如 "_test.py"),避免 "contest.py" 误判
+        - 词边界正则(^test_ / _test. / .test. 等),避免 "contest"/"protest" 误判
+        """
+        import re as _re
+
+        lower = filename.lower()
+        test_exts = cfg.get("test_extensions")
+        if test_exts and lower.endswith(tuple(test_exts)):
+            return True
+        patterns = cfg.get("test_patterns", ["test"])
+        for p in patterns:
+            p_lower = p.lower()
+            if p_lower.startswith(".") or p_lower.endswith("."):
+                # 中缀模式(如 ".spec."):要求两侧都是分隔符
+                if p_lower in lower:
+                    return True
+            elif p_lower.startswith("_") or p_lower.endswith("_"):
+                # 下划线模式(如 "_test"):要求前面是 _ 或开头
+                if f"_{p_lower.strip('_')}" in lower or lower.startswith(p_lower.strip('_')):
+                    return True
+            else:
+                # 裸词(如 "test"):只匹配词边界,避免 contest/protest 误判
+                if _re.search(rf"(^|[_\-.])({_re.escape(p_lower)})([_\-.]|$)", lower):
+                    return True
+        return False
 
     def _check_no_test(self) -> list[RedLineViolation]:
         violations = []
@@ -54,13 +141,15 @@ class RedLineAuditor:
         log = self.git.log_oneline(5)
         if not log:
             return []
+        cfg = self._get_language_config()
+        code_exts = cfg["code_extensions"]
         for line in log.strip().split("\n"):
             if not line.strip():
                 continue
             sha = line.split()[0]
             files = self.git.diff_tree_files(sha)
-            has_code = any(f.endswith(".py") for f in files)
-            has_test = any("test" in f.lower() for f in files)
+            has_code = any(f.endswith(tuple(code_exts)) for f in files)
+            has_test = any(self._is_test_file(f, cfg) for f in files)
             if has_code and not has_test:
                 violations.append(RedLineViolation(
                     "no_test",
@@ -86,7 +175,11 @@ class RedLineAuditor:
         import_re = re.compile(
             r"^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w.]+))"
         )
-        for py_file in src_dir.rglob("*.py"):
+        cfg = self._get_language_config()
+        code_exts = cfg["code_extensions"]
+        for py_file in src_dir.rglob("*"):
+            if not py_file.is_file() or not py_file.suffix in code_exts:
+                continue
             try:
                 content = py_file.read_text(encoding="utf-8")
             except Exception:
@@ -170,6 +263,7 @@ class RedLineAuditor:
             "skip_phase",
             "红线 'skip_phase' 在 MVP 中由状态机不可跳步机制间接保障(非自动检测)",
             skip=True,
+            status=ViolationStatus.STUB,
         )]
 
     def _check_doc_drift(self) -> list[RedLineViolation]:
@@ -178,6 +272,7 @@ class RedLineAuditor:
             "doc_drift",
             "红线 'doc_drift' 缺少自动检测实现(v0.4 补 AST 级检查)",
             skip=True,
+            status=ViolationStatus.STUB,
         )]
 
     def _check_silent_legacy(self) -> list[RedLineViolation]:
@@ -186,6 +281,7 @@ class RedLineAuditor:
             "silent_legacy",
             "红线 'silent_legacy' 缺少自动检测实现(v0.4 补静态分析)",
             skip=True,
+            status=ViolationStatus.STUB,
         )]
 
     def _check_no_contract(self) -> list[RedLineViolation]:
@@ -194,6 +290,7 @@ class RedLineAuditor:
             "no_contract",
             "红线 'no_contract' 在 MVP 中由状态机 Stage3 门禁间接保障(非自动检测)",
             skip=True,
+            status=ViolationStatus.STUB,
         )]
 
     def _check_human_step_auto(self) -> list[RedLineViolation]:
@@ -202,4 +299,5 @@ class RedLineAuditor:
             "human_step_auto",
             "红线 'human_step_auto' 在 MVP 中由 intake 门禁间接保障(非自动检测)",
             skip=True,
+            status=ViolationStatus.STUB,
         )]

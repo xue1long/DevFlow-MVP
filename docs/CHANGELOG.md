@@ -4,6 +4,39 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [v0.3.2] - 2026-08-19（轻量修补）
+
+> **来源**：第 6 轮审计（v0.4 RFC 预审）保留的 4 项低风险修补。v0.4 大重构（账本 schema 演进 / 接口拆分）暂停，等真正需求。
+> **原则**：不改 `_compute_entry_hash`、不扩 LedgerEntry 必填字段（新增字段均 Optional,仅影响新条目哈希,旧链验证不变——已用测试锁定）。
+
+### Added（新增）
+- **P2-14 门禁结果持久化**：`devflow gate <phase>` 命令执行结果（ok / message / stdout_tail / stderr_tail）写入账本
+  - `LedgerEntry` 新增 `gate_result` 可选字段（不破坏旧账本哈希链）
+  - stdout/stderr 尾部 300 字符 + **ANSI 颜色码过滤 + 密钥/token 脱敏**（`_sanitize_gate_result`）
+- **P1-5 补强 status 枚举**：`RedLineViolation` 新增 `ViolationStatus` 枚举（`active` / `mvp_skip` / `stub` / `not_implemented`）
+  - `audit()` 为每条违规分配结构化 status（不再仅靠 message 文本判断）
+  - `devflow audit` 输出新增 `coverage.by_status` 统计
+- **P1-11 语言中性化**：`no_test` / `cross_module_import` 红线不再硬编码 `.py`
+  - sop.yaml 新增 `tooling.languages` 配置（`code_extensions` / `test_patterns` / `test_extensions`）
+  - 缺省回退 `.py`（旧 sop.yaml 行为不变）
+  - 测试文件识别用词边界正则,避免 `contest.py` / `protest.go` 误判
+- 新增 `tests/test_v032.py`（11 条验证测试）
+
+### Changed（变更）
+- **P2-17 timestamp 时区化**：`LedgerEntry.timestamp` 默认值 `datetime.now()` → `datetime.now(timezone.utc)`（UTC 感知）
+  - 旧账本 naive timestamp 读取兼容（已用测试锁定）
+
+### Fixed（修复）
+- **audit 输出语义修正**：stub 红线显式标注 `status="stub"`,用户能区分"已检查"与"未实现"
+- **gate_result 敏感信息泄露**：stdout/stderr 尾部脱敏,不存明文密钥
+
+### Notes
+- v0.4 RFC（`docs/v0.4-rfc.md`）在 4 角色独立审计后回退（10 个去重 P0：分代哈希 / 迁移工具 / spec_id 推断 / 接口拆分全被证伪）
+- v0.4 暂停项：账本 schema 演进（actor/session_id/review_ref/spec_id）、StorageBackend 接口拆分、多 spec 双向 JOIN 完整版
+- 详见 [`docs/audit-ledger.md`](./audit-ledger.md) 第 6 轮
+
+---
+
 ## [v0.3.1-r2] - 2026-08-19（最简替代修补）
 
 > **v0.3.1-r1 方案（4 项 P1 全修 + pytest-cov）在 4 角色独立审计后回退**（7 个交叉 P0，重蹈 v0.3 INDEX 覆辙）。本版本为 r2 最简替代版，零破坏兼容、零新依赖、零 schema 变更。
