@@ -162,16 +162,44 @@ class RedLineAuditor:
         return violations
 
     def _check_skip_phase(self) -> list[RedLineViolation]:
-        return []  # 由状态机的不可跳步机制保障
+        """v0.3.1-r2 P1-5: stub 改为显式返回 RedLineViolation(skip=True)
+
+        让用户看到 stub 而非"无声通过"。具体保障由状态机不可跳步机制兜底。
+        """
+        return [RedLineViolation(
+            "skip_phase",
+            "红线 'skip_phase' 在 MVP 中由状态机不可跳步机制间接保障(非自动检测)",
+            skip=True,
+        )]
 
     def _check_doc_drift(self) -> list[RedLineViolation]:
-        return []  # 无法自动检测
+        """v0.3.1-r2 P1-5: stub 显式返回"""
+        return [RedLineViolation(
+            "doc_drift",
+            "红线 'doc_drift' 缺少自动检测实现(v0.4 补 AST 级检查)",
+            skip=True,
+        )]
 
     def _check_silent_legacy(self) -> list[RedLineViolation]:
-        return []  # 无法自动检测
+        """v0.3.1-r2 P1-5: stub 显式返回"""
+        return [RedLineViolation(
+            "silent_legacy",
+            "红线 'silent_legacy' 缺少自动检测实现(v0.4 补静态分析)",
+            skip=True,
+        )]
 
     def _check_no_contract(self) -> list[RedLineViolation]:
-        return []  # 由状态机 Stage3 门禁保障
+        """v0.3.1-r2 P1-5: stub 显式返回"""
+        return [RedLineViolation(
+            "no_contract",
+            "红线 'no_contract' 在 MVP 中由状态机 Stage3 门禁间接保障(非自动检测)",
+            skip=True,
+        )]
 
     def _check_human_step_auto(self) -> list[RedLineViolation]:
-        return []  # 由 intake 门禁保障
+        """v0.3.1-r2 P1-5: stub 显式返回"""
+        return [RedLineViolation(
+            "human_step_auto",
+            "红线 'human_step_auto' 在 MVP 中由 intake 门禁间接保障(非自动检测)",
+            skip=True,
+        )]

@@ -31,9 +31,9 @@ sop:
     ci_green:
       command: "echo ci-check-placeholder && exit 0"
       blocking: false
-      enabled: true
+      enabled: false
       bind_to_stage: 6
-      note: "⚠️ 占位命令，接入真实 CI 后改为 blocking: true"
+      note: "v0.3.1-r2: 默认禁用(占位命令不应启用)。启用真实 CI: 改为 enabled: true 并配置真实 command"
     intake_gate:
       kind: triage
       require: "ready-for-agent"

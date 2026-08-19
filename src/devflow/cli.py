@@ -180,18 +180,127 @@ def commit(task_id: str):
 
 @app.command()
 def audit():
-    """执行红线审计"""
+    """执行红线审计
+
+    v0.3.1-r2 P1-5 改进:返回 total_real/total_skipped/coverage 字段,
+    让用户区分真实违规与 stub 红线。旧字段 total/active 保留兼容。
+    """
     storage = FSBackend(_get_root())
     config = _get_config()
     git = SystemGitPort(_get_root())
     auditor = RedLineAuditor(storage.root, config, git=git)
     violations = auditor.audit()
+
+    real = [v.to_dict() for v in violations if not v.skip]
+    skipped = [v.to_dict() for v in violations if v.skip]
+
     _output({
         "ok": True,
+        # 旧字段保留(向后兼容)
         "violations": [v.to_dict() for v in violations],
         "total": len(violations),
-        "skipped": sum(1 for v in violations if v.skip),
+        "skipped_count": sum(1 for v in violations if v.skip),
         "active": sum(1 for v in violations if not v.skip),
+        # v0.3.1-r2 新增字段
+        "violations_real": real,
+        "skipped_detail": skipped,
+        "total_real": len(real),
+        "total_skipped": len(skipped),
+        "coverage": {
+            "configured": len(config.red_lines),
+            "real_violations": len(real),
+            "skipped_mvp_or_stub": len(skipped),
+        },
+    })
+
+
+@app.command(name="ci-status")
+def ci_status():
+    """v0.3.1-r2 P1-9: 显示 ci_green 门禁当前配置状态
+
+    让用户清晰看到 ci_green 是否启用、是否为占位命令。
+    """
+    config = _get_config()
+    gate = config.get_gate("ci_green")
+    if gate is None:
+        result = {"ok": False, "message": "ci_green 门禁未配置"}
+    elif not gate.enabled:
+        result = {
+            "ok": True,
+            "status": "disabled",
+            "message": "ci_green 禁用中(占位命令不生效)",
+            "hint": "启用真实 CI:在 sop.yaml 设置 gates.ci_green.enabled: true 并配置真实 command",
+        }
+    else:
+        result = {
+            "ok": True,
+            "status": "enabled",
+            "command": gate.command,
+            "blocking": gate.blocking,
+            "message": "ci_green 已启用",
+        }
+    _output(result)
+
+
+@app.command(name="review-audit")
+def review_audit():
+    """v0.3.1-r2 P1-13: 扫描 ledger 的 review/fix/escalate 条目,与 review_store 报告做 JOIN
+
+    不修改 LedgerEntry schema(避免破坏哈希链)。
+    不修改 review_engine.py 写入点(避免 5 处漏算风险)。
+    单 spec 工作流下准确;多 spec 场景需 v0.4 完整方案。
+    """
+    storage = FSBackend(_get_root())
+    review_store = ReviewStore(_get_root())
+
+    ledger = storage.get_ledger()
+    entries = ledger.get("entries", [])
+
+    # 收集所有 (spec_id, round) 报告键
+    report_keys = set()
+    total_reports = 0
+    for spec_id in review_store.list_spec_ids():
+        for report in review_store.list_reports(spec_id):
+            report_keys.add((spec_id, report.round))
+            total_reports += 1
+
+    # 扫描 ledger 中的 review/fix/escalate 条目
+    review_action_entries = [
+        e for e in entries
+        if e.get("action") in ("review", "fix", "escalate")
+    ]
+
+    # 当前活跃 spec_id(简化:用 ledger 顶层 current_spec_id)
+    # 多 spec 工作流的准确性需 v0.4 改进
+    current_spec_id = ledger.get("current_spec_id")
+
+    # 检测孤儿:ledger 说有 review 但 review_store 没对应报告
+    orphans = []
+    for entry in review_action_entries:
+        details = entry.get("details", "")
+        # 从 details 文本解析 round(如"评审 R1")
+        import re as _re
+        round_match = _re.search(r"R(\d+)", details)
+        if not round_match:
+            continue
+        round_num = int(round_match.group(1))
+        if current_spec_id and (current_spec_id, round_num) not in report_keys:
+            orphans.append({
+                "action": entry["action"],
+                "round": round_num,
+                "missing_report": f"{current_spec_id}/r{round_num}",
+                "entry_details": details[:100],
+            })
+
+    _output({
+        "ok": True,
+        "total_ledger_entries": len(entries),
+        "total_review_actions": len(review_action_entries),
+        "total_reports": total_reports,
+        "current_spec_id": current_spec_id,
+        "scope_note": "v0.3.1-r2:单 spec 工作流下准确;多 spec 场景需 v0.4",
+        "orphans": orphans,
+        "missing_in_ledger_count": 0,  # v0.4 必做项
     })
 
 
