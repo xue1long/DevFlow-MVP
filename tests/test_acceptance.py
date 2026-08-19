@@ -29,7 +29,13 @@ class MockGitPort(GitPort):
     def status(self) -> str:
         return self._status
     def add_and_commit(self, message: str) -> Optional[str]:
-        return "abc1234567890" if self._status else None
+        # P0-8: Mock 不检查敏感文件（测试环境无 .env 等）
+        if self._status:
+            # 模拟敏感文件检查（无敏感文件）
+            return "abc1234567890"
+        return None
+    def check_sensitive_files(self, status_output: str) -> list[str]:
+        return []  # 测试环境无敏感文件
     def diff_stat(self, ref: str = "HEAD~1") -> str:
         return ""
     def log_oneline(self, count: int = 5) -> str:
@@ -112,10 +118,10 @@ class TestAcceptance:
         storage.write_plan("test-plan", plan.model_dump(mode="json"))
         storage.set_current_plan_id("test-plan")
 
-        # 无代码变更时 commit 应失败
+        # 无代码变更时 commit 应失败（P1-3: 阶段校验优先于代码变更检查）
         result = machine.commit_task("task-1")
         assert not result["ok"]
-        assert "无变更" in result["message"]
+        assert "commit 只能在 Stage5" in result["message"]
 
     def test_7_ledger_has_all_phases(self, devflow_env):
         machine, storage, config, root, git = devflow_env

@@ -12,6 +12,18 @@ from typing import Optional
 from ..policy.loader import SOPConfig, GateConfig
 
 
+# P0-7: 危险命令模式——阻止注入/破坏性命令
+# 注：shell 链式运算符(&&, ||, |) 被允许，因为测试命令常用且 sop.yaml 是受信任配置
+DANGEROUS_PATTERNS = [
+    "rm -rf", "del /f", "rd /s",                    # 破坏性删除
+    "> /etc/", "> /dev/",                            # 覆写系统文件
+    "wget ", "curl -o", "curl |", "nc -",            # 远程下载/数据外传
+    "invoke-expression", "iex ",                     # PowerShell 注入
+    "chmod 777", "chmod +x",                         # 权限滥用
+    "sudo ", "su ", "pkexec",                        # 提权
+]
+
+
 class GateRunner:
     """门禁执行器
 
@@ -94,23 +106,51 @@ class GateRunner:
         }
 
     def _execute_command(self, command: str) -> dict:
-        """执行 shell 命令，返回结果"""
+        """执行 shell 命令，返回结果
+        
+        P1-12: 增加超时保护（默认 120 秒），防止门禁命令无限挂起
+        """
+        blocked = self._validate_command(command)
+        if blocked:
+            return {"returncode": -3, "stdout": "", "stderr": blocked}
+
         env = None
         if self.config.tooling.get("proxy_strip"):
             env = os.environ.copy()
             for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
                 env.pop(key, None)
 
+        # 从 sop.yaml 读取超时配置，默认 120 秒
+        timeout = self.config.tooling.get("command_timeout", 120)
+
         try:
             result = subprocess.run(
                 command, shell=True,
                 cwd=self.cwd, capture_output=True, text=True,
                 env=env,
+                timeout=timeout,
             )
             return {
                 "returncode": result.returncode,
                 "stdout": result.stdout or "",
                 "stderr": result.stderr or "",
             }
+        except subprocess.TimeoutExpired:
+            return {
+                "returncode": -2,
+                "stdout": "",
+                "stderr": f"命令执行超时（超过 {timeout} 秒）: {command[:100]}",
+            }
         except Exception as e:
             return {"returncode": -1, "stdout": "", "stderr": str(e)}
+
+    def _validate_command(self, command: str) -> Optional[str]:
+        """P0-7: 检测破坏性/注入命令，返回阻止原因或 None"""
+        lowered = command.lower()
+        for pattern in DANGEROUS_PATTERNS:
+            if pattern in lowered:
+                return (
+                    f"命令包含危险模式 '{pattern}'，已阻止执行（P0-7 安全防护）。"
+                    f"如果是误报，请检查 sop.yaml 中 gate.command 配置"
+                )
+        return None

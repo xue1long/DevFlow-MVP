@@ -73,6 +73,18 @@ class PhaseStateMachine:
         """创建新 Spec + Intake + 写账本，返回结果"""
         spec_id = self._make_spec_id(draft)
 
+        # P1-1: 检查 spec_id 是否已存在，避免覆盖
+        existing = self.storage.read_spec(spec_id)
+        if existing is not None:
+            # 追加时间戳后缀确保唯一
+            from datetime import datetime
+            suffix = datetime.now().strftime("%H%M%S")
+            spec_id = f"{spec_id}-{suffix}"
+            # 再次检查（极小概率碰撞）
+            if self.storage.read_spec(spec_id) is not None:
+                import random
+                spec_id = f"{spec_id}-{random.randint(100, 999)}"
+
         spec = Spec(
             id=spec_id,
             title=draft[:100],
@@ -120,6 +132,18 @@ class PhaseStateMachine:
         if not gate_result["ok"]:
             return gate_result
 
+        # P0-6: 检查 review_gate（如果当前阶段绑定 review_gate 且 review_engine 已注入）
+        if self.review_engine:
+            review_gate = self.config.gates.get("review_gate")
+            if review_gate and review_gate.enabled and review_gate.bind_to_stage == phase:
+                rv = self.review_engine.check_review_gate()
+                if not rv["ok"]:
+                    return {
+                        "ok": False,
+                        "message": f"review_gate 未通过: {rv['message']}",
+                        "violations": rv.get("violations", []),
+                    }
+
         new_phase = phase + 1
         if new_phase >= len(self.PHASE_NAMES):
             return {"ok": True, "phase": phase, "message": "工作流已完成（已在 finish 阶段）"}
@@ -139,7 +163,16 @@ class PhaseStateMachine:
         }
 
     def approve_spec(self, spec_id: str) -> dict:
-        """校验 Spec 必填字段并推进 status 到 approved"""
+        """校验 Spec 必填字段并推进 status 到 approved
+        
+        P1-4: 只能在 Stage0 (intake) 或 Stage1 (brainstorm) 时 approve
+        """
+        phase = self.current_phase
+        if phase > 1:
+            return {
+                "ok": False, "message": f"当前在 Stage{phase} ({self.PHASE_NAMES[phase]})，"
+                f"approve 只能在 Stage0/1 执行。已在流程中的 Spec 无法重复 approve"
+            }
         spec_data = self.storage.read_spec(spec_id)
         if spec_data is None:
             return {"ok": False, "message": f"Spec '{spec_id}' 不存在"}
@@ -170,6 +203,141 @@ class PhaseStateMachine:
             details=f"Spec '{spec_id}' approved",
         ))
         return {"ok": True, "message": f"Spec '{spec_id}' 已 approved"}
+
+    # --- P0-5: Plan/Task/Contract 管理命令 ---
+
+    def create_plan(self, task_specs: list[str]) -> dict:
+        """创建计划（Stage2 plan 阶段）"""
+        spec_id = self.storage.get_current_spec_id()
+        if spec_id is None:
+            return {"ok": False, "message": "当前无活跃 Spec，请先执行 devflow start"}
+
+        plan_id = f"plan-{spec_id}"
+        tasks = []
+        for i, spec in enumerate(task_specs or []):
+            parts = spec.split("|")
+            title = parts[0].strip() if len(parts) > 0 else f"Task {i+1}"
+            module = parts[1].strip() if len(parts) > 1 else ""
+            acceptance_list = [a.strip() for a in parts[2].split(",") if a.strip()] if len(parts) > 2 else []
+            if not acceptance_list:
+                acceptance_list = ["待补充"]
+            tasks.append(Task(
+                id=f"task-{i+1}",
+                title=title,
+                module=module,
+                acceptance=acceptance_list,
+            ))
+
+        if not tasks:
+            tasks.append(Task(
+                id="task-1", title="待补充", module="", acceptance=["待补充"],
+            ))
+
+        plan = Plan(spec_id=spec_id, tasks=tasks)
+        self.storage.write_plan(plan_id, plan.model_dump(mode="json"))
+        self.storage.set_current_plan_id(plan_id)
+
+        self.storage.append_ledger(LedgerEntry(
+            phase=self.current_phase,
+            action=LedgerAction.ARTIFACT,
+            details=f"Plan '{plan_id}' 已创建，含 {len(tasks)} 个 Task",
+        ))
+
+        return {
+            "ok": True,
+            "message": f"Plan '{plan_id}' 已创建，含 {len(tasks)} 个 Task",
+            "plan_id": plan_id,
+            "tasks": [{"id": t.id, "title": t.title} for t in tasks],
+        }
+
+    def add_task(self, title: str, module: str, acceptance: list[str]) -> dict:
+        """添加 Task 到当前 Plan"""
+        plan_id = self.storage.get_current_plan_id()
+        if plan_id is None:
+            return {"ok": False, "message": "当前无活跃 Plan，请先执行 devflow plan"}
+
+        plan_data = self.storage.read_plan(plan_id)
+        if plan_data is None:
+            return {"ok": False, "message": f"Plan '{plan_id}' 不存在"}
+
+        plan = Plan(**plan_data)
+        next_num = len(plan.tasks) + 1
+        task = Task(
+            id=f"task-{next_num}",
+            title=title,
+            module=module,
+            acceptance=acceptance or ["待补充"],
+        )
+        plan.tasks.append(task)
+        self.storage.write_plan(plan_id, plan.model_dump(mode="json"))
+
+        self.storage.append_ledger(LedgerEntry(
+            phase=self.current_phase,
+            task_id=task.id,
+            action=LedgerAction.ARTIFACT,
+            details=f"Task '{task.id}' ({title}) 已添加到 Plan '{plan_id}'",
+        ))
+
+        return {"ok": True, "message": f"Task '{task.id}' 已添加", "task_id": task.id}
+
+    def list_tasks(self) -> dict:
+        """列出当前 Plan 的所有 Task"""
+        plan_id = self.storage.get_current_plan_id()
+        if plan_id is None:
+            return {"ok": False, "message": "当前无活跃 Plan"}
+
+        plan_data = self.storage.read_plan(plan_id)
+        if plan_data is None:
+            return {"ok": False, "message": f"Plan '{plan_id}' 不存在"}
+
+        plan = Plan(**plan_data)
+        tasks_info = []
+        for t in plan.tasks:
+            tasks_info.append({
+                "id": t.id,
+                "title": t.title,
+                "module": t.module,
+                "acceptance": t.acceptance,
+                "status": t.status.value,
+                "has_contract": t.contract is not None,
+            })
+
+        return {
+            "ok": True,
+            "plan_id": plan_id,
+            "spec_id": plan.spec_id,
+            "total_tasks": len(plan.tasks),
+            "tasks": tasks_info,
+        }
+
+    def add_contract(self, task_id: str, module: str, signature: str) -> dict:
+        """为 Task 添加 Contract（Stage3 contract 阶段）"""
+        plan_id = self.storage.get_current_plan_id()
+        if plan_id is None:
+            return {"ok": False, "message": "当前无活跃 Plan"}
+
+        plan_data = self.storage.read_plan(plan_id)
+        if plan_data is None:
+            return {"ok": False, "message": f"Plan '{plan_id}' 不存在"}
+
+        plan = Plan(**plan_data)
+        task = next((t for t in plan.tasks if t.id == task_id), None)
+        if task is None:
+            return {"ok": False, "message": f"Task '{task_id}' 不存在于当前 Plan"}
+
+        contract = Contract(module=module, interface_signature=signature)
+        task.contract = contract
+        task.status = TaskStatus.CONTRACTED
+        self.storage.write_plan(plan_id, plan.model_dump(mode="json"))
+
+        self.storage.append_ledger(LedgerEntry(
+            phase=self.current_phase,
+            task_id=task_id,
+            action=LedgerAction.ARTIFACT,
+            details=f"Contract 已添加: {module}.{signature[:50]}",
+        ))
+
+        return {"ok": True, "message": f"Task '{task_id}' 的 Contract 已添加", "contract_id": task_id}
 
     def skip_task(self, task_id: str, reason: str) -> dict:
         """跳过 todo/contracted 状态的 task"""
@@ -203,7 +371,16 @@ class PhaseStateMachine:
         return {"ok": True, "message": f"Task '{task_id}' 已 skipped"}
 
     def commit_task(self, task_id: str) -> dict:
-        """校验门禁 → git commit → 写账本 → task→done"""
+        """校验门禁 → git commit → 写账本 → task→done
+        
+        P1-3: 只能在 Stage5 (verify) 或之后 commit
+        """
+        phase = self.current_phase
+        if phase < 5:
+            return {
+                "ok": False, "message": f"当前在 Stage{phase} ({self.PHASE_NAMES[phase]})，"
+                f"commit 只能在 Stage5 (verify) 及之后执行。请先完成前序阶段"
+            }
         if self.gate_runner is None or self.git is None:
             return {"ok": False, "message": "commit 需要 GateRunner 和 GitPort"}
 

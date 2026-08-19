@@ -204,6 +204,49 @@ def review(
 
 
 @app.command()
+def plan(
+    tasks: list[str] = typer.Option([], "--task", help="初始 Task 描述，格式 '标题|模块|验收标准'"),
+):
+    """创建计划（Stage2 plan 阶段）"""
+    machine, _, config = _get_machine()
+    result = machine.create_plan(tasks)
+    _output(result)
+
+
+@app.command(name="task-add")
+def task_add(
+    title: str = typer.Argument(..., help="Task 标题"),
+    module: str = typer.Option(..., "--module", "-m", help="模块名"),
+    acceptance: str = typer.Option(..., "--acceptance", "-a", help="验收标准（逗号分隔多个）"),
+):
+    """添加 Task 到当前 Plan"""
+    machine, _, _ = _get_machine()
+    accept_list = [a.strip() for a in acceptance.split(",") if a.strip()]
+    result = machine.add_task(title, module, accept_list)
+    _output(result)
+
+
+@app.command(name="task-list")
+def task_list():
+    """列出当前 Plan 的所有 Task"""
+    machine, _, _ = _get_machine()
+    result = machine.list_tasks()
+    _output(result)
+
+
+@app.command(name="contract-add")
+def contract_add(
+    task_id: str = typer.Argument(..., help="Task ID"),
+    module: str = typer.Option(..., "--module", "-m", help="模块名"),
+    signature: str = typer.Option(..., "--signature", "-s", help="接口签名"),
+):
+    """为 Task 添加 Contract（Stage3 contract 阶段）"""
+    machine, _, _ = _get_machine()
+    result = machine.add_contract(task_id, module, signature)
+    _output(result)
+
+
+@app.command()
 def fix(
     violation_ids: list[str] = typer.Argument(..., help="要修复的违规 ID，如 S-001 SP-001"),
     note: str = typer.Option("", "--note", "-n", help="修复摘要"),

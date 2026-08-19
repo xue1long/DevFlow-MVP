@@ -26,11 +26,27 @@ class ReviewStore:
 
     # --- 评审报告 ---
 
-    def write_report(self, report: ReviewReport) -> Path:
-        """写入评审报告"""
+    def write_report(self, report: ReviewReport, force: bool = False) -> Path:
+        """写入评审报告（P1-14: 默认禁止覆写已有报告）
+
+        Args:
+            report: 要写入的评审报告
+            force: True 时允许覆写（仅 fix() 更新 resolved 状态时使用）
+        """
         spec_dir = self.review_dir / report.spec_id
         spec_dir.mkdir(parents=True, exist_ok=True)
         path = spec_dir / f"r{report.round}.yaml"
+        if path.exists() and not force:
+            raise FileExistsError(
+                f"评审报告 {path} 已存在。轮次 {report.round} 不可覆写，"
+                f"历史评审记录不可篡改（如需维护状态用 fix 命令）"
+            )
+        self._write_yaml(path, report.model_dump(mode="json"))
+        return path
+
+    def update_report(self, report: ReviewReport) -> Path:
+        """更新已有评审报告（仅允许维护 resolved/residual 状态，不改 verdict）"""
+        path = self.review_dir / report.spec_id / f"r{report.round}.yaml"
         self._write_yaml(path, report.model_dump(mode="json"))
         return path
 

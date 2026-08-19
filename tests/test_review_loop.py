@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from devflow.model import Spec, SpecStatus, Plan, Task, TaskStatus
+from devflow.model import Spec, SpecStatus, Plan, Task, TaskStatus, Contract
 from devflow.model.review import ReviewReport, FixRecord, ReviewVerdict, ViolationSeverity, AxeReview
 from devflow.model import LedgerEntry, LedgerAction
 from devflow.storage.fs_backend import FSBackend
@@ -53,7 +53,7 @@ def _create_spec_and_plan(env, complete_spec: bool = True):
     spec_id = storage.get_current_spec_id()
 
     if not complete_spec:
-        # 写入一个真正不完整的 Spec（缺 non_goals）
+        # 写入一个真正不完整的 Spec（缺必填字段）
         storage.write_spec(spec_id, {
             "id": spec_id,
             "title": "Pipeline Batch Retry",
@@ -74,7 +74,12 @@ def _create_spec_and_plan(env, complete_spec: bool = True):
 
     plan = Plan(
         spec_id=spec_id,
-        tasks=[Task(id="task-1", title="T1", module="pipeline", acceptance=["a1"])],
+        tasks=[Task(
+            id="task-1", title="T1", module="pipeline",
+            acceptance=["支持 batch 级重试"],
+            # P0-4: 始终添加 Contract，避免 spec_contract_missing 干扰其他测试
+            contract={"module": "pipeline", "interface_signature": "retry_batch()"},
+        )],
     )
     storage.write_plan("p1", plan.model_dump(mode="json"))
     storage.set_current_plan_id("p1")

@@ -29,6 +29,9 @@ class MockGitPort(GitPort):
     def status(self) -> str:
         return self._status
 
+    def check_sensitive_files(self, status_output: str) -> list[str]:
+        return []  # 测试环境无敏感文件
+
     def add_and_commit(self, message: str) -> Optional[str]:
         return "abc1234567890" if self._status else None
 

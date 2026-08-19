@@ -18,6 +18,7 @@ from ..model.review import (
 from ..model.ledger import LedgerEntry, LedgerAction
 from ..model.spec import Spec
 from ..model.plan import Plan
+from ..model.task import TaskStatus
 from ..storage.base import StorageBackend
 from ..storage.review_store import ReviewStore
 from ..policy.loader import SOPConfig
@@ -113,10 +114,7 @@ class ReviewEngine:
                 verdict=ReviewVerdict.FAIL if standards_violations else ReviewVerdict.PASS,
                 violations=standards_violations,
             ),
-            spec=AxeReview(
-                verdict=ReviewVerdict.PASS,  # 默认 PASS，等待 LLM 结果填写
-                violations=[],
-            ),
+            spec=self._run_spec_checks(spec_id),
         )
 
         # 回归检测：当前轮违规是否与历史已修规则复发
@@ -124,7 +122,7 @@ class ReviewEngine:
         if regression_warnings:
             report._regression_warnings = regression_warnings
 
-        # 写入报告
+        # 写入报告（P1-14: 默认禁止覆写已有报告，历史不可篡改）
         self.review_store.write_report(report)
 
         # 写账本
@@ -239,8 +237,8 @@ class ReviewEngine:
         )
         self.review_store.write_fix(fix)
 
-        # 更新报告（重新写入）
-        self.review_store.write_report(latest)
+        # 更新报告（仅维护 resolved 状态，使用专用更新方法）
+        self.review_store.update_report(latest)
 
         # 写账本
         self.storage.append_ledger(LedgerEntry(
@@ -454,6 +452,100 @@ class ReviewEngine:
 
         return violations
 
+    # --- P0-4: Spec 轴真实检查 ---
+
+    def _run_spec_checks(self, spec_id: str) -> AxeReview:
+        """Spec 轴真实检查：验证 Spec 目标是否被 Plan 覆盖
+
+        当 Plan 存在时，检查：
+        - 每个 Spec goal 是否在 Plan 中有对应 task
+        - 每个 task 是否有 Contract（非 skipped）
+        当 Plan 不存在时返回 PASS（不可评估，不误报）
+        当 Spec 数据不完整时（非标准 Spec 格式），跳过 pydantic 构造改用 dict
+        """
+        spec_data = self.storage.read_spec(spec_id)
+        plan_id = self.storage.get_current_plan_id()
+        if spec_data is None or plan_id is None:
+            return AxeReview(verdict=ReviewVerdict.PASS, violations=[])
+
+        plan_data = self.storage.read_plan(plan_id)
+        if plan_data is None:
+            return AxeReview(verdict=ReviewVerdict.PASS, violations=[])
+
+        # 使用 dict 访问以兼容不完整 Spec 数据（避免 pydantic 构造失败）
+        goals = spec_data.get("goals", [])
+        if not isinstance(goals, list):
+            goals = []
+
+        non_goals = spec_data.get("non_goals", [])
+        if not isinstance(non_goals, list):
+            non_goals = []
+
+        violations = []
+        idx = 0
+
+        # 检查每个 goal 是否在 Plan 中有对应
+        for goal in goals:
+            g = str(goal).strip()
+            if g in ("待补充", ""):
+                continue
+            covered = False
+            for t in plan_data.get("tasks", []):
+                title = t.get("title", "")
+                module = t.get("module", "")
+                acceptance = t.get("acceptance", [])
+                if g in title or g in module or any(g in a for a in acceptance):
+                    covered = True
+                    break
+            if not covered:
+                idx += 1
+                violations.append(ReviewViolation(
+                    id=f"SP-{idx}",
+                    axis="spec",
+                    rule="spec_goal_uncovered",
+                    severity=ViolationSeverity.MAJOR,
+                    message=f"Spec 目标「{g}」在 Plan 中未找到对应 Task",
+                ))
+
+        # 检查每个非 skipped task 是否有 Contract
+        for t in plan_data.get("tasks", []):
+            status = t.get("status", "")
+            if status == "skipped":
+                continue
+            contract = t.get("contract")
+            if contract is None:
+                tid = t.get("id", "?")
+                title = t.get("title", "?")
+                idx += 1
+                violations.append(ReviewViolation(
+                    id=f"SP-{idx}",
+                    axis="spec",
+                    rule="spec_contract_missing",
+                    severity=ViolationSeverity.MAJOR,
+                    message=f"Task {tid} ({title}) 缺少 Contract",
+                ))
+
+        # 占位 goals 标记为 minor 提示
+        placeholder_goals = sum(1 for g in goals if str(g).strip() in ("待补充", ""))
+        if placeholder_goals > 0:
+            idx += 1
+            violations.append(ReviewViolation(
+                id=f"SP-{idx}",
+                axis="spec",
+                rule="spec_goals_placeholder",
+                severity=ViolationSeverity.MINOR,
+                message=f"Spec 有 {placeholder_goals} 个占位 goal（待补充），建议补充完整",
+            ))
+
+        verdict = ReviewVerdict.FAIL if any(
+            v.severity == ViolationSeverity.FATAL for v in violations
+        ) else (
+            ReviewVerdict.FAIL if any(
+                v.severity == ViolationSeverity.MAJOR for v in violations
+            ) else ReviewVerdict.PASS
+        )
+        return AxeReview(verdict=verdict, violations=violations)
+
     def _generate_spec_review_context(self, artifacts: dict) -> str:
         """生成 Spec 轴评审上下文（供 LLM 子代理使用）"""
         spec_data = artifacts.get("spec_data", {})
@@ -556,7 +648,8 @@ class ReviewEngine:
             return None
 
         recent = history[-self.STAGNATION_THRESHOLD:]
-        counts = [r.total_violations for r in recent]
+        # P1-7: 使用未 resolved 的违规数，而非 total_violations（含已修复）
+        counts = [r.total_violations - r.resolved_count for r in recent]
 
         # 全部轮次都有违规 且 违规数没有严格下降
         if all(c > 0 for c in counts):
