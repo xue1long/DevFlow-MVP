@@ -6,6 +6,15 @@
 
 ## [Unreleased]
 
+### Planned（v0.3 设计中，未实施）
+- **工作区布局重构**：运行时产物统一迁入 `doc/devflow-workspace/` 子目录
+  - `plans/`（按 Spec 分目录）
+  - `reviews/`（按 Spec 分目录）
+  - `implementations/`（按 Spec 分目录）
+  - `archive/finished/<stage>/`（按阶段归档）
+  - `data/`（账本、术语表、锁文件）
+- 详见 [`docs/workspace-layout-v0.1.md`](./workspace-layout-v0.1.md)
+
 ### Added
 - （暂无）
 

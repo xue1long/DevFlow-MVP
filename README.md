@@ -203,6 +203,7 @@ python -c "from devflow.storage.fs_backend import FSBackend; from pathlib import
 - 首轮审计报告：[`docs/devflow-first-audit-report-v0.1.md`](./docs/devflow-first-audit-report-v0.1.md)
 - 审计流程提示词：[`docs/audit-prompt-template-v0.1.md`](./docs/audit-prompt-template-v0.1.md)
 - 文档规范：[`docs/DOCS_GUIDELINES.md`](./docs/DOCS_GUIDELINES.md)
+- 工作区布局设计：[`docs/workspace-layout-v0.1.md`](./docs/workspace-layout-v0.1.md)（v0.3 实施）
 - 变更日志：[`docs/CHANGELOG.md`](./docs/CHANGELOG.md)
 - 审计整改台账：[`docs/audit-ledger.md`](./docs/audit-ledger.md)
 

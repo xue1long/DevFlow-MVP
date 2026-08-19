@@ -8,7 +8,8 @@
 |------|------|------|------|
 | [README.md](../README.md) | 上手指南 | — | 安装、5 分钟上手、CLI 速查、架构图 |
 | [DOCS_GUIDELINES.md](./DOCS_GUIDELINES.md) | 规范 | v0.1 | 文档命名 + 归档 + 版本号约定 |
-| [CHANGELOG.md](./CHANGELOG.md) | 变更日志 | — | v0.1 / v0.2 / v0.2.1 完整变更 |
+| [workspace-layout-v0.1.md](./workspace-layout-v0.1.md) | 设计 | v0.3 设计 | 用户项目内 DevFlow 工作区目录结构 |
+| [CHANGELOG.md](./CHANGELOG.md) | 变更日志 | — | v0.1 / v0.2 / v0.2.1 + Unreleased |
 
 ## 设计文档
 
@@ -35,6 +36,7 @@ devflow/
 ├── docs/                  ← 本目录
 │   ├── README.md          ← 本文件（索引）
 │   ├── DOCS_GUIDELINES.md ← 文档规范
+│   ├── workspace-layout-v0.1.md
 │   ├── CHANGELOG.md       ← 变更日志
 │   ├── audit-ledger.md    ← 审计整改台账
 │   ├── audit-prompt-template-v0.1.md
@@ -42,7 +44,8 @@ devflow/
 │   ├── devflow-mvp-brief.md
 │   ├── devflow-first-audit-report-v0.1.md
 │   ├── mvp-gate-degradation-matrix-v0.1.md
-│   └── review-loop-v0.2-design.md
+│   ├── review-loop-v0.2-design.md
+│   └── workspace-layout-v0.1.md
 ├── src/devflow/           ← 源代码
 ├── tests/                 ← 测试
 ├── config/                ← SOP 默认配置
