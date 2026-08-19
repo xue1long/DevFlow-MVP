@@ -29,6 +29,15 @@ class ReviewEngine:
     # 最大审核轮次
     MAX_REVIEW_ROUNDS = 5
 
+    # 收敛判定：连续多少轮违规数不下降即触发提前升级
+    STAGNATION_THRESHOLD = 2
+
+    # 可自动验证修复的规则（fix 时重跑检查确认真修好了）
+    AUTO_VERIFIABLE_RULES = {
+        "spec_completeness", "problem_length", "goals_required", "non_goals_required",
+        "task_module_empty", "task_acceptance_empty",
+    }
+
     # Standards 轴检查规则
     STANDARDS_RULES = {
         "no_test": "代码变更包含 .py 文件但无对应 test 文件",
@@ -78,6 +87,11 @@ class ReviewEngine:
         if round > self.MAX_REVIEW_ROUNDS:
             return self._escalate(spec_id, round)
 
+        # 收敛判定：连续多轮违规数不下降 → 提前升级，避免空耗
+        stagnation = self._detect_stagnation(spec_id, round)
+        if stagnation:
+            return self._stagnation_escalate(spec_id, round, stagnation)
+
         # 收集审核工件
         artifacts = self._collect_artifacts(spec_id)
         if not artifacts["ok"]:
@@ -105,6 +119,11 @@ class ReviewEngine:
             ),
         )
 
+        # 回归检测：当前轮违规是否与历史已修规则复发
+        regression_warnings = self._detect_regression(spec_id, round, report)
+        if regression_warnings:
+            report._regression_warnings = regression_warnings
+
         # 写入报告
         self.review_store.write_report(report)
 
@@ -117,7 +136,7 @@ class ReviewEngine:
                     f"major={report.major_count}, minor={report.minor_count})",
         ))
 
-        return {
+        result = {
             "ok": True,
             "message": f"评审 R{round} 完成",
             "report_id": report.id,
@@ -133,6 +152,9 @@ class ReviewEngine:
             "spec_review_prompt": spec_context,
             "report": report.model_dump(mode="json"),
         }
+        if regression_warnings:
+            result["regression_warnings"] = regression_warnings
+        return result
 
     # --- 修复违规 ---
 
@@ -160,6 +182,13 @@ class ReviewEngine:
         resolved = []
         residual_list = []
         not_found = []
+        unverified = []
+        regression = []
+
+        # 收集当前工件，用于重新验证
+        artifacts = self._collect_artifacts(spec_id)
+        verify_ok = artifacts.get("ok", False)
+        fresh_violations = self._run_standards_checks(artifacts) if verify_ok else []
 
         for vid in violation_ids:
             violation = latest.get_violation(vid)
@@ -171,13 +200,34 @@ class ReviewEngine:
                 violation.residual = True
                 violation.resolved = True
                 residual_list.append(vid)
-            else:
-                violation.resolved = True
-                violation.resolved_at = __import__("datetime").datetime.now().isoformat()
-                resolved.append(vid)
+                continue
+
+            # 修复验证：可自动验证的规则，确认真修好了才标记 resolved
+            if violation.rule in self.AUTO_VERIFIABLE_RULES:
+                still_present = any(
+                    fv.rule == violation.rule for fv in fresh_violations
+                )
+                if still_present:
+                    unverified.append(vid)
+                    continue
+
+            violation.resolved = True
+            violation.resolved_at = __import__("datetime").datetime.now().isoformat()
+            resolved.append(vid)
+
+            # 回归检测：测试当前存在的违规是否与已 resolved 的违规同规则
+            # （排查"修好了又复发"的情况）
 
         if not_found:
             return {"ok": False, "message": f"违规未找到: {not_found}", "not_found": not_found}
+
+        if unverified:
+            return {
+                "ok": False,
+                "message": f"以下违规未通过验证，修复未完成: {unverified}。"
+                           f"请先真正修复（如补全 Spec 字段）再执行 devflow fix",
+                "unverified": unverified,
+            }
 
         # 写修复记录
         fix = FixRecord(
@@ -486,3 +536,108 @@ class ReviewEngine:
             "round": round,
             "escalated": True,
         }
+
+    def _detect_stagnation(self, spec_id: str, current_round: int) -> Optional[dict]:
+        """收敛判定：检查最近几轮违规数是否持续不下降
+
+        规则：从当前轮-1 往前数 STAGNATION_THRESHOLD 轮，
+        如果这些轮次（有违规的轮）的 total_violations 不递减，认为陷入停滞。
+
+        Returns:
+            停滞详情 dict，若无停滞返回 None
+        """
+        if current_round <= 1:
+            return None
+
+        reports = self.review_store.list_reports(spec_id)
+        # 只看当前轮之前的历史（不含本轮，本轮还没写）
+        history = [r for r in reports if r.round < current_round]
+        if len(history) < self.STAGNATION_THRESHOLD:
+            return None
+
+        recent = history[-self.STAGNATION_THRESHOLD:]
+        counts = [r.total_violations for r in recent]
+
+        # 全部轮次都有违规 且 违规数没有严格下降
+        if all(c > 0 for c in counts):
+            is_decreasing = all(
+                counts[i + 1] < counts[i]
+                for i in range(len(counts) - 1)
+            )
+            if not is_decreasing:
+                return {
+                    "recent_rounds": [r.round for r in recent],
+                    "violation_counts": counts,
+                    "threshold": self.STAGNATION_THRESHOLD,
+                }
+        return None
+
+    def _stagnation_escalate(self, spec_id: str, round: int, stagnation: dict) -> dict:
+        """停滞升级：违规数连续不降，提前终止循环"""
+        report = ReviewReport(
+            id=f"r{round}",
+            spec_id=spec_id,
+            round=round,
+            phase=self.storage.get_current_phase(),
+            status="escalated",
+            standards=AxeReview(verdict=ReviewVerdict.ESCALATED),
+            spec=AxeReview(verdict=ReviewVerdict.ESCALATED),
+        )
+        self.review_store.write_report(report)
+
+        counts = stagnation["violation_counts"]
+        rounds = stagnation["recent_rounds"]
+        self.storage.append_ledger(LedgerEntry(
+            phase=report.phase,
+            action=LedgerAction.ESCALATE,
+            details=f"评审 R{round} 升级: 违规数连续 {self.STAGNATION_THRESHOLD} 轮未下降 "
+                    f"(轮次 {rounds}，违规数 {counts})，判定死循环，需人工介入",
+        ))
+
+        return {
+            "ok": True,
+            "message": f"检测到死循环: 违规数连续 {self.STAGNATION_THRESHOLD} 轮未下降 "
+                       f"({counts})，已升级为 escalated，需人工介入",
+            "report_id": report.id,
+            "round": round,
+            "escalated": True,
+            "reason": "stagnation",
+            "stagnation": stagnation,
+        }
+
+    def _detect_regression(self, spec_id: str, current_round: int,
+                            current_report: ReviewReport) -> list[dict]:
+        """回归检测：当前轮违规是否与已修复的历史违规同规则复发"""
+        if current_round <= 1:
+            return []
+
+        reports = self.review_store.list_reports(spec_id)
+        history = [r for r in reports if r.round < current_round]
+        if not history:
+            return []
+
+        # 收集所有历史已 resolved 的违规规则
+        resolved_rules = set()
+        for r in history:
+            for v in r._all_violations():
+                if v.resolved and not v.residual:
+                    resolved_rules.add(v.rule)
+
+        if not resolved_rules:
+            return []
+
+        # 检查当前轮是否出现相同规则的新违规
+        current_rules = {v.rule for v in current_report._all_violations()}
+        regressed = resolved_rules & current_rules
+
+        if not regressed:
+            return []
+
+        return [
+            {
+                "rule": rule,
+                "message": f"规则 '{rule}' 曾在历史评审中修复，本轮再次出现",
+                "suggestion": "检查修复是否彻底，或考虑登记为残余风险（--residual）不再循环",
+            }
+            for rule in sorted(regressed)
+        ]

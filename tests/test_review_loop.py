@@ -127,11 +127,23 @@ class TestReviewEngine:
         spec_id, _ = _create_spec_and_plan(env, complete_spec=False)
         result = engine.review(spec_id=spec_id)
         latest = review_store.latest_report(spec_id)
-        violations = [v for v in latest._all_violations() if v.severity == ViolationSeverity.MAJOR]
+        violations = [v for v in latest._all_violations()
+                      if v.severity == ViolationSeverity.MAJOR]
         if not violations:
             pytest.skip("无 major 违规可修复")
+
+        # 先真正修复 Spec（补全必填字段），再标记修复
+        spec = Spec(
+            id=spec_id,
+            title="Pipeline Batch Retry",
+            problem="当前 pipeline 无重试机制，失败即中断，需要增加 batch 粒度的重试",
+            goals=["支持 batch 级重试"],
+            non_goals=["不引入消息队列"],
+        )
+        storage.write_spec(spec_id, spec.model_dump(mode="json"))
+
         vid = violations[0].id
-        fix_result = engine.fix([vid], summary="已修复")
+        fix_result = engine.fix([vid], summary="已补全 Spec 必填字段")
         assert fix_result["ok"]
         assert (root / "review" / spec_id / "f1.yaml").exists()
 
@@ -226,6 +238,88 @@ class TestReviewEngine:
         review_types = [t["type"] for t in history["timeline"]]
         assert review_types.count("review") >= 2
         assert "fix" in review_types
+
+    # --- 防死循环专项测试 ---
+
+    def test_14_fix_verifies_real_fix(self, env):
+        """fix 必须通过验证才标记 resolved——防止'假修复'死循环"""
+        engine, storage, config, review_store, machine, root = env
+        spec_id, _ = _create_spec_and_plan(env, complete_spec=False)
+        r1 = engine.review(spec_id=spec_id)
+        assert not r1["can_advance"]
+
+        # 不真正修复 Spec，直接调用 fix → 应被拒绝
+        latest = review_store.latest_report(spec_id)
+        fn_violations = [v for v in latest._all_violations()
+                         if v.rule in ("spec_completeness", "problem_length", "goals_required")]
+        result = engine.fix([v.id for v in fn_violations], summary="假装修好了")
+        assert not result["ok"]
+        assert "未通过验证" in result["message"]
+
+        # 验证违规仍是 unresolved
+        latest2 = review_store.latest_report(spec_id)
+        still_open = [v for v in latest2._all_violations() if not v.resolved]
+        assert len(still_open) >= len(fn_violations)
+
+    def test_15_stagnation_escalates_early(self, env):
+        """违规数连续不降 → 提前升级，不空耗轮次"""
+        engine, storage, config, review_store, machine, root = env
+        spec_id, _ = _create_spec_and_plan(env, complete_spec=False)
+
+        # 连续评审，始终保持不完整 Spec（违规数不降）
+        counts = []
+        for _ in range(2):
+            r = engine.review(spec_id=spec_id)
+            counts.append(r["total_violations"])
+
+        # 第 3 次评审应触发停滞升级（征用了第 3 轮）
+        r3 = engine.review(spec_id=spec_id)
+        assert r3.get("escalated") is True
+        assert r3.get("reason") == "stagnation"
+
+        latest = review_store.latest_report(spec_id)
+        assert latest.status == "escalated"
+
+    def test_16_regression_detection(self, env):
+        """已修复的规则再次出现 → 回归警告"""
+        engine, storage, config, review_store, machine, root = env
+        spec_id, _ = _create_spec_and_plan(env, complete_spec=False)
+        r1 = engine.review(spec_id=spec_id)
+
+        # 先修复（真正补全 Spec）
+        spec = Spec(
+            id=spec_id,
+            title="Pipeline Batch Retry",
+            problem="当前 pipeline 无重试机制，失败即中断，需要增加 batch 粒度的重试",
+            goals=["支持 batch 级重试"],
+            non_goals=["不引入消息队列"],
+        )
+        storage.write_spec(spec_id, spec.model_dump(mode="json"))
+        latest = review_store.latest_report(spec_id)
+        fn_violations = [v for v in latest._all_violations()
+                         if v.rule in ("spec_completeness", "problem_length", "goals_required")]
+        engine.fix([v.id for v in fn_violations], summary="已补全")
+
+        # 第 2 轮评审（现在 Spec 完整，无违规）
+        r2 = engine.review(spec_id=spec_id)
+        assert r2["can_advance"]
+
+        # 故意制造回归：把 Spec 改回不完整
+        storage.write_spec(spec_id, {
+            "id": spec_id,
+            "title": "Pipeline Batch Retry",
+            "problem": "短",
+            "goals": [],
+            "non_goals": [],
+            "status": "draft",
+        })
+
+        # 第 3 轮评审 → 应检测到回归
+        r3 = engine.review(spec_id=spec_id)
+        assert "regression_warnings" in r3
+        assert len(r3["regression_warnings"]) > 0
+        rules = [w["rule"] for w in r3["regression_warnings"]]
+        assert "spec_completeness" in rules
 
 
 # --- 模型级测试 ---
