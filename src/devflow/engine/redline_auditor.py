@@ -54,6 +54,16 @@ class RedLineViolation:
 class RedLineAuditor:
     """红线审计器"""
 
+    # v0.4 P1-5 折中版: 5 条 stub 集中声明（之前是 5 个 _check_* 方法）
+    # 行为完全兼容旧 sop.yaml（sop.yaml 配这 5 个名字 → 仍返回 STUB 状态）
+    _STUB_RULES: dict[str, str] = {
+        "skip_phase":     "红线 'skip_phase' 在 MVP 中由状态机不可跳步机制间接保障(非自动检测)",
+        "doc_drift":      "红线 'doc_drift' 缺少自动检测实现(v0.4 补 AST 级检查)",
+        "silent_legacy":  "红线 'silent_legacy' 缺少自动检测实现(v0.4 补静态分析)",
+        "no_contract":    "红线 'no_contract' 在 MVP 中由状态机 Stage3 门禁间接保障(非自动检测)",
+        "human_step_auto":"红线 'human_step_auto' 在 MVP 中由 intake 门禁间接保障(非自动检测)",
+    }
+
     def __init__(self, root: Path, config: SOPConfig, git: Optional[GitPort] = None):
         self.root = root
         self.config = config
@@ -63,6 +73,7 @@ class RedLineAuditor:
         """执行全量红线扫描
 
         v0.3.2 P1-5 补强: 为每条违规标注结构化 status 枚举。
+        v0.4 P1-5 折中版: 三态判定（内置 / stub / 未知），stub 集中声明。
         """
         violations: list[RedLineViolation] = []
         for red_line in self.config.red_lines:
@@ -74,6 +85,16 @@ class RedLineAuditor:
                     status=ViolationStatus.MVP_SKIP,
                 ))
                 continue
+            # 1. 集中声明的 stub（v0.4 折中版：替代 5 个 _check_* 方法）
+            if red_line.name in self._STUB_RULES:
+                violations.append(RedLineViolation(
+                    red_line.name,
+                    self._STUB_RULES[red_line.name],
+                    skip=True,
+                    status=ViolationStatus.STUB,
+                ))
+                continue
+            # 2. 真实 checker（用户实现的方法）
             checker = getattr(self, f"_check_{red_line.name}", None)
             if checker is None:
                 violations.append(RedLineViolation(
@@ -258,54 +279,6 @@ class RedLineAuditor:
                 "当前在 main/master 分支上，建议在特性分支上开发",
             ))
         return violations
-
-    def _check_skip_phase(self) -> list[RedLineViolation]:
-        """v0.3.1-r2 P1-5: stub 改为显式返回 RedLineViolation(skip=True)
-
-        让用户看到 stub 而非"无声通过"。具体保障由状态机不可跳步机制兜底。
-        """
-        return [RedLineViolation(
-            "skip_phase",
-            "红线 'skip_phase' 在 MVP 中由状态机不可跳步机制间接保障(非自动检测)",
-            skip=True,
-            status=ViolationStatus.STUB,
-        )]
-
-    def _check_doc_drift(self) -> list[RedLineViolation]:
-        """v0.3.1-r2 P1-5: stub 显式返回"""
-        return [RedLineViolation(
-            "doc_drift",
-            "红线 'doc_drift' 缺少自动检测实现(v0.4 补 AST 级检查)",
-            skip=True,
-            status=ViolationStatus.STUB,
-        )]
-
-    def _check_silent_legacy(self) -> list[RedLineViolation]:
-        """v0.3.1-r2 P1-5: stub 显式返回"""
-        return [RedLineViolation(
-            "silent_legacy",
-            "红线 'silent_legacy' 缺少自动检测实现(v0.4 补静态分析)",
-            skip=True,
-            status=ViolationStatus.STUB,
-        )]
-
-    def _check_no_contract(self) -> list[RedLineViolation]:
-        """v0.3.1-r2 P1-5: stub 显式返回"""
-        return [RedLineViolation(
-            "no_contract",
-            "红线 'no_contract' 在 MVP 中由状态机 Stage3 门禁间接保障(非自动检测)",
-            skip=True,
-            status=ViolationStatus.STUB,
-        )]
-
-    def _check_human_step_auto(self) -> list[RedLineViolation]:
-        """v0.3.1-r2 P1-5: stub 显式返回"""
-        return [RedLineViolation(
-            "human_step_auto",
-            "红线 'human_step_auto' 在 MVP 中由 intake 门禁间接保障(非自动检测)",
-            skip=True,
-            status=ViolationStatus.STUB,
-        )]
 
     def implemented_rule_names(self) -> list[str]:
         """v0.3.3: 返回已实现自动检测的红线名称列表

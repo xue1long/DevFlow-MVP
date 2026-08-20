@@ -88,16 +88,20 @@ def test_p1_2_default_yaml_ci_green_disabled():
 # --- P1-5: stub 红线显式返回 RedLineViolation(skip=True) ---
 
 def test_p1_5_stub_redlines_return_skip_violation(env):
-    """v0.3.1-r2: 5 条 stub 红线应返回 RedLineViolation(skip=True)而非空列表"""
+    """v0.3.1-r2: 5 条 stub 红线应返回 RedLineViolation(skip=True)而非空列表
+
+    v0.4 P1-5 折中版: stub 集中到 _STUB_RULES 字典，通过 audit() 验证（不直接调 _check_*）
+    """
     _, _, config, tmp_path = env
     auditor = RedLineAuditor(tmp_path, config, git=None)
 
-    # 逐个验证 5 条 stub 返回 skip=True 的 violation
-    for rule_name in ["skip_phase", "doc_drift", "silent_legacy", "no_contract", "human_step_auto"]:
-        result = getattr(auditor, f"_check_{rule_name}")()
-        assert len(result) >= 1, f"{rule_name} stub 应返回至少 1 个 violation"
-        assert result[0].skip is True, f"{rule_name} stub 违规应 skip=True"
-        assert rule_name in result[0].rule
+    violations = auditor.audit()
+    stub_names = {"skip_phase", "doc_drift", "silent_legacy", "no_contract", "human_step_auto"}
+    stub_violations = [v for v in violations if v.rule in stub_names]
+    assert len(stub_violations) == 5, f"应返回 5 条 stub violations，实际 {len(stub_violations)}"
+    for v in stub_violations:
+        assert v.skip is True, f"{v.rule} stub 违规应 skip=True"
+        assert v.status.value == "stub", f"{v.rule} stub 状态应为 stub"
 
 
 def test_p1_5_audit_returns_stub_in_skipped_not_real(env):

@@ -100,3 +100,45 @@ def test_hash_chain_works_with_new_fields(fs_env):
     # 验证哈希链
     result = storage.verify_ledger()
     assert result["ok"], f"哈希链验证失败：{result.get('message')}"
+
+
+# --- v0.4 P1-5 折中版：5 条 stub 集中到 _STUB_RULES 字典 ---
+
+def test_v034_stub_rules_consolidated():
+    """v0.4 P1-5 折中版：5 条 stub 仍返回 STUB 状态（行为完全兼容）"""
+    from devflow.engine.redline_auditor import RedLineAuditor, ViolationStatus
+    from devflow.policy.loader import SOPConfig, RedLineConfig
+
+    # 构造 config，sop.yaml 含 5 条 stub 名
+    config = SOPConfig(
+        red_lines=[
+            RedLineConfig(name="skip_phase"),
+            RedLineConfig(name="doc_drift"),
+            RedLineConfig(name="silent_legacy"),
+            RedLineConfig(name="no_contract"),
+            RedLineConfig(name="human_step_auto"),
+        ],
+    )
+    auditor = RedLineAuditor(Path("/tmp"), config, git=None)
+    violations = auditor.audit()
+
+    assert len(violations) == 5, f"应返回 5 条 stub violations，实际 {len(violations)}"
+    for v in violations:
+        assert v.skip is True
+        assert v.status == ViolationStatus.STUB
+
+
+def test_v034_unknown_rule_still_not_implemented():
+    """v0.4 P1-5：sop.yaml 配不存在的规则 → NOT_IMPLEMENTED"""
+    from devflow.engine.redline_auditor import RedLineAuditor, ViolationStatus
+    from devflow.policy.loader import SOPConfig, RedLineConfig
+
+    config = SOPConfig(
+        red_lines=[RedLineConfig(name="does_not_exist")],
+    )
+    auditor = RedLineAuditor(Path("/tmp"), config, git=None)
+    violations = auditor.audit()
+
+    assert len(violations) == 1
+    assert violations[0].status == ViolationStatus.NOT_IMPLEMENTED
+    assert violations[0].skip is True
