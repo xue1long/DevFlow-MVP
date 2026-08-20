@@ -62,10 +62,10 @@ sop:
       test_extensions: [".test.py", "_test.py", ".test.ts", "_test.ts", ".test.go", "_test.go"]
   storage:
     backend: fs
-    specs_dir: specs
-    plans_dir: plans
-    ledger: progress.yaml
-    glossary: CONTEXT.md
+    specs_dir: docs/devflow/specs
+    plans_dir: docs/devflow/plans
+    ledger: docs/devflow/progress.yaml
+    glossary: docs/devflow/CONTEXT.md
     content_address: false
   allow_fast_forward: false
   # v0.3.3: 思维模型落地配置(宽松默认: MINOR 提示不阻断)

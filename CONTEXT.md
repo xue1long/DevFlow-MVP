@@ -10,30 +10,36 @@
 ```
 {项目根目录}/
 │
-├── specs/                  ← Spec 文件（需求 / 方案）
-│   └── {spec-id}.yaml      ← 如 20260820-pipeline-retry.yaml
+├── docs/
+│   ├── devflow/                ← DevFlow 运行时产物根（v0.3.4 统一前缀）
+│   │   ├── specs/
+│   │   │   └── {spec-id}.yaml      ← Spec 文件（需求 / 方案）
+│   │   ├── plans/
+│   │   │   └── {plan-id}.yaml      ← 计划文件（Plan + Task 列表）
+│   │   ├── review/
+│   │   │   └── {spec-id}/
+│   │   │       ├── r{N}.yaml       ← 第 N 轮评审报告（只增不改）
+│   │   │       └── f{N}.yaml       ← 第 N 轮修复记录（只增不改）
+│   │   ├── progress.yaml           ← 哈希链账本（机器状态 + 决策审计，不手改）
+│   │   └── progress.yaml.lock      ← 文件锁（运行时临时，正常状态不存在）
+│   │
+│   ├── README.md               ← 项目文档（原有，命名见 docs/DOCS_GUIDELINES.md）
+│   ├── architecture...md       ← 架构文档等（原有，不动）
+│   └── ...
 │
-├── plans/                  ← 计划文件（Plan + Task 列表）
-│   └── {plan-id}.yaml      ← 如 plan-20260820-pipeline-retry.yaml
-│
-├── review/                 ← 审核产物（评审报告 + 修复记录）
-│   └── {spec-id}/
-│       ├── r{N}.yaml       ← 第 N 轮评审报告（只增不改）
-│       └── f{N}.yaml       ← 第 N 轮修复记录（只增不改）
-│
-├── progress.yaml           ← 哈希链账本（机器状态 + 决策审计，不手改）
-├── progress.yaml.lock      ← 文件锁（运行时临时，正常状态不存在）
-├── sop.yaml                ← 流程配置（devflow init 生成）
-├── CONTEXT.md              ← 本文件（领域术语表 + 布局规范）
-├── handoff-{N}.md          ← 阶段交接物（如 handoff-3.md）
+├── sop.yaml                ← 流程配置（devflow init 生成，根目录保留）
+├── CONTEXT.md              ← 本文件（术语表 + 布局规范，根目录保留）
+├── handoff-{N}.md          ← 阶段交接物（如 handoff-3.md，根目录保留）
 │
 ├── src/                    ← 项目源代码（本仓库 = devflow 引擎自身）
 ├── tests/                  ← 测试代码
-├── docs/                   ← 项目文档（命名见 docs/DOCS_GUIDELINES.md）
 ├── config/                 ← 默认配置模板
 │   └── sop.default.yaml    ← init 时复制为 sop.yaml
 └── graphify-out/           ← 知识图谱产物（.gitignore 排除，非展示文件）
 ```
+
+> **路径策略**：以上 `docs/devflow/` 前缀由 `src/devflow/storage/layout.py` 的 `LayoutResolver`
+> 统一解析（读 `sop.yaml` 的 `storage:` 节）。改保存位置只需改配置，不动引擎代码。
 
 ---
 
@@ -41,12 +47,12 @@
 
 | 内容 | 路径 | 格式 | 创建者 | 可写性 |
 |------|------|------|--------|--------|
-| **Spec（需求/方案）** | `specs/{spec-id}.yaml` | YAML | `devflow start` | 手动编辑（补齐字段） |
-| **Plan（计划方案）** | `plans/plan-{spec-id}.yaml` | YAML | `devflow plan` | 命令生成，勿手改 |
-| **评审报告** | `review/{spec-id}/r{N}.yaml` | YAML | `devflow review` | **不可覆写**（P1-14 承诺） |
-| **修复记录** | `review/{spec-id}/f{N}.yaml` | YAML | `devflow fix` | **不可覆写** |
-| **账本** | `progress.yaml` | YAML | 引擎自动 | **禁止手改**（哈希链校验） |
-| **文件锁** | `progress.yaml.lock` | 文本(pid) | 引擎临时 | 运行中出现，正常结束即删 |
+| **Spec（需求/方案）** | `docs/devflow/specs/{spec-id}.yaml` | YAML | `devflow start` | 手动编辑（补齐字段） |
+| **Plan（计划方案）** | `docs/devflow/plans/plan-{spec-id}.yaml` | YAML | `devflow plan` | 命令生成，勿手改 |
+| **评审报告** | `docs/devflow/review/{spec-id}/r{N}.yaml` | YAML | `devflow review` | **不可覆写**（P1-14 承诺） |
+| **修复记录** | `docs/devflow/review/{spec-id}/f{N}.yaml` | YAML | `devflow fix` | **不可覆写** |
+| **账本** | `docs/devflow/progress.yaml` | YAML | 引擎自动 | **禁止手改**（哈希链校验） |
+| **文件锁** | `docs/devflow/progress.yaml.lock` | 文本(pid) | 引擎临时 | 运行中出现，正常结束即删 |
 | **流程配置** | `sop.yaml` | YAML | `devflow init` | 可编辑（改后影响门禁） |
 | **领域术语** | `CONTEXT.md` | Markdown | `devflow init` | 可编辑 |
 | **交接物** | `handoff-{phase}.md` | Markdown | `devflow suspend` | 只读（恢复时读取） |
@@ -85,12 +91,12 @@
 ## 4. 只读 / 写入边界（Agent 必须遵守）
 
 ### 🔒 禁止写入 / 修改
-- `progress.yaml` — 篡改会被 `devflow audit` 哈希链校验揭穿
-- `review/{spec-id}/r{N}.yaml`、`f{N}.yaml` — 历史不可改写，只能追加新轮次
-- `plans/plan-*.yaml` — 用 `devflow plan / task-add / contract-add` 操作，不直接编辑
+- `docs/devflow/progress.yaml` — 篡改会被 `devflow audit` 哈希链校验揭穿
+- `docs/devflow/review/{spec-id}/r{N}.yaml`、`f{N}.yaml` — 历史不可改写，只能追加新轮次
+- `docs/devflow/plans/plan-*.yaml` — 用 `devflow plan / task-add / contract-add` 操作，不直接编辑
 
 ### ✍️ 允许编辑
-- `specs/{spec-id}.yaml` — 补齐 goals / non_goals / problem / acceptance
+- `docs/devflow/specs/{spec-id}.yaml` — 补齐 goals / non_goals / problem / acceptance
 - `sop.yaml` — 流程配置（谨慎：改门禁影响全流程）
 - `CONTEXT.md` — 术语与规范
 - `graphify-out/` — 生成物，可重建
@@ -102,15 +108,17 @@
 
 ---
 
-## 5. 该布局为什么不采用 v0.1 提案的"按 Spec 分域目录"
+## 5. 路径策略变更记录（v0.3.4 → v0.4.0）
 
-`docs/workspace-layout-v0.1.md` 曾提议 `doc/devflow-workspace/{plans,reviews,implementations}/{spec-id}/`，被 4 角色评审否决：
+`docs/workspace-layout-v0.1.md` 曾提议 `doc/devflow-workspace/{plans,reviews,implementations}/{spec-id}/`，被 4 角色评审否决。
 
-1. **哈希链断裂**：账本 paths 写死 `specs/`、`plans/`，迁移会断链（P0）
-2. **扁平 + 搜索更优**：`devflow find` 已提供跨文件搜索，无需目录组织
-3. **后端抽象**：`StorageBackend` 接口允许未来换后端，路径约定不绑定文件系统
+**v0.3.4** 通过 `LayoutResolver`（`src/devflow/storage/layout.py`）实现了**配置化路径策略**：
 
-**结论**：保持根目录扁平布局，以命名前缀（`plan-`、`r{N}`、`f{N}`、`handoff-{N}`）+ 搜索代替目录分组。
+1. **改路径不再改引擎代码**：`sop.yaml` 的 `storage:` 段是唯一配置源，`LayoutResolver` 解析出 `LayoutPaths` 注入各存储后端
+2. **默认值 `docs/devflow/`**：运行时产物统一前缀，不污染根目录
+3. **后向兼容**：`FSBackend(layout=LayoutPaths(root))` 显式传入旧布局即可恢复旧路径
+
+**结论**：路径策略已从"硬编码约定"升级为"配置驱动"。改路径 = 改 `sop.yaml` 一行，不动引擎代码。
 
 ---
 

@@ -860,11 +860,16 @@ class PhaseStateMachine:
         suggested_skills = self._get_suggested_skills(phase)
 
         plan_id = self.storage.get_current_plan_id() or spec_id
-        artifact_refs = [
-            f"specs/{spec_id}.yaml",
-            f"plans/{plan_id}.yaml",
-            "progress.yaml",
-        ]
+        # v0.3.4: artifact_refs 从 storage.layout 取路径（避免硬编码 specs/plans/progress）
+        layout = getattr(self.storage, "layout", None)
+        if layout is not None:
+            artifact_refs = layout.artifact_refs(spec_id, plan_id)
+        else:
+            artifact_refs = [
+                f"specs/{spec_id}.yaml",
+                f"plans/{plan_id}.yaml",
+                "progress.yaml",
+            ]
 
         # YAML frontmatter(结构化,Agent 可解析)
         frontmatter = {

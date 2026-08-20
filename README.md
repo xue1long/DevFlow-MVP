@@ -34,7 +34,7 @@ devflow init
 # 2. 创建需求草稿
 devflow start "为 pipeline 增加 batch 重试机制"
 
-# 3. 编辑 specs/<spec-id>.yaml，补齐 goals / non_goals / problem 字段
+# 3. 编辑 docs/devflow/specs/<spec-id>.yaml，补齐 goals / non_goals / problem 字段
 
 # 4. 通过 Spec 校验
 devflow approve <spec-id>
@@ -69,7 +69,7 @@ devflow history
 
 | 命令 | 阶段 | 说明 |
 |------|------|------|
-| `devflow init` | — | 初始化工作区（创建 sop.yaml + specs/ + plans/） |
+| `devflow init` | — | 初始化工作区（创建 sop.yaml + docs/devflow/specs/ + docs/devflow/plans/） |
 | `devflow start "<需求>"` | 0 | 创建 Spec + Intake |
 | `devflow approve <spec-id>` | 0-1 | 校验 Spec 必填字段并 approve |
 | `devflow next` | * | 推进到下一阶段（含门禁检查） |

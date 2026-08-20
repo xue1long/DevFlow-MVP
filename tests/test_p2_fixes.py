@@ -228,7 +228,7 @@ def test_p2_resume_detects_missing_spec(fs_env):
     machine.suspend("test handoff")
     # 删除 spec 文件，模拟外部删除
     spec_id = storage.get_current_spec_id()
-    spec_path = tmp_path / "specs" / f"{spec_id}.yaml"
+    spec_path = storage.specs_dir / f"{spec_id}.yaml"
     spec_path.unlink()
     # resume 应检测到缺失并发出警告
     result = machine.resume()

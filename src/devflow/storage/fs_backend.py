@@ -22,6 +22,7 @@ import yaml
 
 from ..model.ledger import LedgerEntry, LedgerAction
 from .base import StorageBackend
+from .layout import LayoutPaths, resolve_layout
 
 logger = logging.getLogger(__name__)
 
@@ -44,17 +45,26 @@ class FSBackend(StorageBackend):
 
     LOCK_TIMEOUT = 10  # 锁等待超时（秒）
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, layout: Optional[LayoutPaths] = None):
         self._root = root
-        self.specs_dir = root / "specs"
-        self.plans_dir = root / "plans"
-        self.ledger_path = root / "progress.yaml"
-        self.glossary_path = root / "CONTEXT.md"
-        self.lock_path = root / "progress.yaml.lock"
+        # v0.3.4: 路径策略唯一出口 = LayoutPaths 默认值（docs/devflow/）。
+        # 传入 layout（如从 sop.yaml storage 段解析）则用它；否则用默认布局。
+        # 不再有"旧路径回退"——避免配置与代码双份真相源漂移。
+        self._layout = layout or LayoutPaths(root)
+        self.specs_dir = self._layout.specs_dir
+        self.plans_dir = self._layout.plans_dir
+        self.ledger_path = self._layout.ledger_path
+        self.glossary_path = self._layout.glossary_path
+        self.lock_path = self._layout.lock_path
 
     @property
     def root(self) -> Path:
         return self._root
+
+    @property
+    def layout(self) -> LayoutPaths:
+        """暴露路径策略（ReviewStore / 其它组件复用同一 layout，避免漂移）"""
+        return self._layout
 
     # --- 文件锁 ---
 
@@ -217,8 +227,8 @@ class FSBackend(StorageBackend):
     # --- 初始化 ---
 
     def init_workspace(self, sop_content: str) -> None:
-        self.specs_dir.mkdir(parents=True, exist_ok=True)
-        self.plans_dir.mkdir(parents=True, exist_ok=True)
+        for d in self._layout.init_dirs():
+            d.mkdir(parents=True, exist_ok=True)
 
         sop_path = self.root / "sop.yaml"
         if not sop_path.exists():
@@ -392,7 +402,7 @@ class FSBackend(StorageBackend):
     # --- Handoff ---
 
     def write_handoff(self, phase: int, content: str) -> Path:
-        path = self.root / f"handoff-{phase}.md"
+        path = self._layout.handoff_path(phase)
         # 原子写：避免崩溃产生损坏的半写文件（与 P0-1 一致）
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_path = tempfile.mkstemp(
@@ -415,13 +425,13 @@ class FSBackend(StorageBackend):
         return path
 
     def read_handoff(self, phase: int) -> Optional[str]:
-        path = self.root / f"handoff-{phase}.md"
+        path = self._layout.handoff_path(phase)
         if not path.exists():
             return None
         return path.read_text(encoding="utf-8")
 
     def find_latest_handoff(self) -> Optional[tuple[int, str]]:
-        handoffs = list(self.root.glob("handoff-*.md"))
+        handoffs = list(self.root.glob(self._layout.handoff_glob()))
         if not handoffs:
             return None
         def _phase(p: Path) -> int:

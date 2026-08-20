@@ -90,7 +90,12 @@ def _get_machine() -> tuple[PhaseStateMachine, StorageBackend, 'SOPConfig']:
 
 def _get_review_engine(storage: StorageBackend, config: 'SOPConfig') -> ReviewEngine:
     """组装 ReviewEngine"""
-    review_store = ReviewStore(_get_root())
+    # v0.3.4: ReviewStore 复用 FSBackend 的 layout，确保 review 路径与存储层一致
+    layout = getattr(storage, "layout", None)
+    if layout is not None:
+        review_store = ReviewStore(_get_root(), layout=layout)
+    else:
+        review_store = ReviewStore(_get_root())
     return ReviewEngine(storage, config, review_store)
 
 
@@ -134,11 +139,16 @@ def init():
     review_gate: {kind: "review", blocking: true, enabled: true, bind_to_stage: 2, max_rounds: 5, require_clear: true}
   modules: {facade: "__init__.py", forbidden_import: ["service/", "model/", "utils/internal/"]}
   tooling: {test_runner: "pytest", import_mode: "importlib", proxy_strip: true, command_timeout: 120}
-  storage: {backend: fs, specs_dir: specs, plans_dir: plans, ledger: progress.yaml, glossary: CONTEXT.md, content_address: false}
+  storage: {backend: fs, specs_dir: docs/devflow/specs, plans_dir: docs/devflow/plans, ledger: docs/devflow/progress.yaml, glossary: CONTEXT.md, content_address: false}
   allow_fast_forward: false
 """
     storage.init_workspace(sop_content)
-    _output({"ok": True, "message": "DevFlow 工作区已初始化", "files": ["sop.yaml", "specs/", "plans/", "progress.yaml", "CONTEXT.md"]})
+    # v0.3.4: init 输出清单从 storage.layout 取（与真实路径一致）
+    layout = getattr(storage, "layout", None)
+    file_list = layout.init_file_list() if layout is not None else [
+        "sop.yaml", "specs/", "plans/", "progress.yaml", "CONTEXT.md",
+    ]
+    _output({"ok": True, "message": "DevFlow 工作区已初始化", "files": file_list})
 
 
 @app.command()
@@ -638,7 +648,11 @@ def find(
                 pass
 
         # Review 文件
-        review_dir = root / "review" / spec_id
+        review_dir = getattr(storage, "layout", None)
+        if review_dir is not None:
+            review_dir = review_dir.review_spec_dir(spec_id)
+        else:
+            review_dir = root / "review" / spec_id
         if review_dir.exists():
             for r_file in review_dir.glob("*.yaml"):
                 try:

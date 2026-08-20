@@ -65,7 +65,8 @@ def fs_env(tmp_path):
     storage = FSBackend(tmp_path)
     storage.init_workspace(SOP)
     config = load_sop(tmp_path / "sop.yaml")
-    review_store = FSReviewBackend(tmp_path)
+    # v0.3.4: ReviewStore 共享 FSBackend 的 layout，确保路径一致
+    review_store = FSReviewBackend(tmp_path, layout=storage.layout)
     engine = ReviewEngine(storage, config, review_store)
     gate_runner = GateRunner(config, str(tmp_path), review_engine=engine)
     machine = PhaseStateMachine(storage, config, gate_runner=gate_runner, review_engine=engine)
@@ -118,7 +119,10 @@ class TestReviewEngine:
         spec_id, _ = _create_spec_and_plan(fs_env)
         result = engine.review(spec_id=spec_id)
         assert result["ok"]
-        assert (root / "review" / spec_id / "r1.yaml").exists()
+        # v0.3.4: 真实路径在 storage.layout.review_spec_dir
+        review_layout = storage.layout.review_spec_dir(spec_id)
+        assert review_layout.exists()
+        assert (review_layout / "r1.yaml").exists()
 
     def test_2_report_has_two_axes(self, env):
         engine, storage, config, review_store, machine, root = env
@@ -176,7 +180,9 @@ class TestReviewEngine:
         vid = violations[0].id
         fix_result = engine.fix([vid], summary="已补全 Spec 必填字段")
         assert fix_result["ok"]
-        assert (root / "review" / spec_id / "f1.yaml").exists()
+        # v0.3.4: 真实路径在 storage.layout.review_spec_dir
+        review_layout = storage.layout.review_spec_dir(spec_id)
+        assert (review_layout / "f1.yaml").exists()
 
     def test_7_round2_does_not_overwrite_r1(self, fs_env):  # Plan C: fs_env 验证 r1.yaml + r2.yaml 都落地
         engine, storage, config, review_store, machine, root = fs_env
@@ -184,8 +190,10 @@ class TestReviewEngine:
         engine.review(spec_id=spec_id)
         engine.review(spec_id=spec_id)
         # 轮次自动递增
-        assert (root / "review" / spec_id / "r1.yaml").exists()
-        assert (root / "review" / spec_id / "r2.yaml").exists()
+        # v0.3.4: 真实路径在 storage.layout
+        review_layout = storage.layout.review_spec_dir(spec_id)
+        assert (review_layout / "r1.yaml").exists()
+        assert (review_layout / "r2.yaml").exists()
 
     def test_8_max_rounds_escalates(self, env):
         engine, storage, config, review_store, machine, root = env

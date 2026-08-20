@@ -74,10 +74,12 @@ class TestAcceptance:
     def test_1_init_generates_files(self, devflow_env):
         machine, storage, config, root, git = devflow_env
         assert (root / "sop.yaml").exists()
-        assert (root / "specs").is_dir()
-        assert (root / "plans").is_dir()
-        assert (root / "progress.yaml").exists()
-        assert (root / "CONTEXT.md").exists()
+        # v0.3.4: 路径已改为 docs/devflow/specs 等
+        layout = storage.layout
+        assert layout.specs_dir.exists()
+        assert layout.plans_dir.exists()
+        assert layout.ledger_path.exists()
+        assert layout.glossary_path.exists()
 
     def test_2_start_creates_spec(self, devflow_env):
         machine, storage, config, root, git = devflow_env

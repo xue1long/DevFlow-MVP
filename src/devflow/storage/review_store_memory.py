@@ -20,6 +20,7 @@ from typing import Optional
 
 from ..model.review import ReviewReport, FixRecord
 from .review_store_base import ReviewStorageBackend
+from .layout import LayoutPaths, resolve_layout
 
 
 class MemoryReviewBackend(ReviewStorageBackend):
@@ -28,8 +29,10 @@ class MemoryReviewBackend(ReviewStorageBackend):
     生产代码必须使用 :class:`FSReviewBackend`。设计权衡详见模块 docstring。
     """
 
-    def __init__(self, root: Path | str = Path("/tmp/memory-review")):
+    def __init__(self, root: Path | str = Path("/tmp/memory-review"),
+                 layout: Optional[LayoutPaths] = None):
         self._root = Path(root)
+        self._layout = layout or LayoutPaths(self._root)
         # _reports[spec_id][round] = ReviewReport
         self._reports: dict[str, dict[int, ReviewReport]] = {}
         # _fixes[spec_id] = list[FixRecord]
@@ -42,12 +45,12 @@ class MemoryReviewBackend(ReviewStorageBackend):
         if report.round in spec_reports and not force:
             raise FileExistsError("dup")
         spec_reports[report.round] = report.model_copy(deep=True)
-        return self._root / "review" / report.spec_id / f"r{report.round}.yaml"
+        return self._layout.review_report_path(report.spec_id, report.round)
 
     def update_report(self, report: ReviewReport) -> Path:
         spec_reports = self._reports.setdefault(report.spec_id, {})
         spec_reports[report.round] = report.model_copy(deep=True)
-        return self._root / "review" / report.spec_id / f"r{report.round}.yaml"
+        return self._layout.review_report_path(report.spec_id, report.round)
 
     def read_report(self, spec_id: str, round: int) -> Optional[ReviewReport]:
         r = self._reports.get(spec_id, {}).get(round)
@@ -72,7 +75,7 @@ class MemoryReviewBackend(ReviewStorageBackend):
         next_num = (max(int(fix.id[1:]) for fix in existing if fix.id and fix.id.startswith("f")) + 1) if existing else 1
         fix.id = f"f{next_num}"
         self._fixes.setdefault(spec_id, []).append(fix.model_copy(deep=True))
-        return self._root / "review" / spec_id / f"f{next_num}.yaml"
+        return self._layout.review_fix_path(spec_id, next_num)
 
     def list_fixes(self, spec_id: str) -> list[FixRecord]:
         return [fix.model_copy(deep=True) for fix in self._fixes.get(spec_id, [])]

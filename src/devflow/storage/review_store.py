@@ -19,6 +19,7 @@ import yaml
 
 from ..model.review import ReviewReport, FixRecord
 from .review_store_base import ReviewStorageBackend
+from .layout import LayoutPaths, resolve_layout
 
 
 # 保留 ReviewStore 别名以兼容旧 import 路径（实际类已重命名为 FSReviewBackend）
@@ -34,9 +35,11 @@ class FSReviewBackend(ReviewStorageBackend):
         from .storage.review_store import ReviewStore  # 别名 = FSReviewBackend
     """
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, layout: Optional[LayoutPaths] = None):
         self.root = root
-        self.review_dir = root / "review"
+        # v0.3.4: 与 FSBackend 一致，默认布局 = LayoutPaths（docs/devflow/review）
+        self._layout = layout or LayoutPaths(root)
+        self.review_dir = self._layout.review_dir
 
     # --- 评审报告 ---
 
