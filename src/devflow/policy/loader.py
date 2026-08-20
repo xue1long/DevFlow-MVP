@@ -54,6 +54,33 @@ class ThinkingConfig(BaseModel):
     severity: str = "minor"  # minor | off(off = 只记录不提示)
 
 
+class ModelTiersConfig(BaseModel):
+    """v0.3 B6 阶段：SDD 子代理编排的模型分档配置
+
+    借鉴 obra SDD（架构文档 §5.2.1 #7）：
+    - 机械任务用最廉价模型
+    - 集成 / 判断用标准
+    - 架构用最强
+    - 修复轮次 4–5 升级模型
+
+    默认值：implementer=sonnet / reviewer=haiku / escalator=opus
+    """
+    implementer: str = "sonnet"
+    reviewer: str = "haiku"
+    escalator: str = "opus"
+
+
+class SDConfig(BaseModel):
+    """v0.3 B6 阶段：SDD 子代理编排配置
+
+    从 sop.yaml `sd:` 节读取。
+    """
+    model_tiers: ModelTiersConfig = Field(default_factory=ModelTiersConfig)
+    max_rounds: int = Field(default=5, ge=1, le=20)
+    parallel: bool = Field(default=False)
+    worktree_per_task: bool = Field(default=False)
+
+
 class SOPConfig(BaseModel):
     """sop.yaml 完整配置"""
     sop_version: Optional[str] = None
@@ -72,6 +99,8 @@ class SOPConfig(BaseModel):
     storage: dict[str, Any] = Field(default_factory=dict)
     allow_fast_forward: bool = False
     thinking: ThinkingConfig = Field(default_factory=ThinkingConfig)
+    # v0.3 B6 阶段：SDD 子代理编排配置
+    sd: SDConfig = Field(default_factory=SDConfig)
 
     def get_gate(self, name: str) -> Optional[GateConfig]:
         return self.gates.get(name)
@@ -110,6 +139,20 @@ def load_sop(path: Path) -> SOPConfig:
     """
     with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
+    return _parse_sop_dict(raw)
+
+
+def load_sop_from_text(content: str) -> SOPConfig:
+    """Phase C: 从 YAML 文本加载 SOP 配置（不经文件系统）。
+
+    供 MemoryStorageBackend fixture 使用，避免 fixture 同时依赖 in-memory
+    storage + 磁盘 sop.yaml 文件这一不一致状态。
+    """
+    raw = yaml.safe_load(content) or {}
+    return _parse_sop_dict(raw)
+
+
+def _parse_sop_dict(raw: dict) -> SOPConfig:
 
     sop_raw = raw.get("sop", raw)
 

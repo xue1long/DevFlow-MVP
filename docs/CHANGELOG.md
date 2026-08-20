@@ -8,6 +8,57 @@
 
 ### Added
 - `RedLineAuditor.implemented_rule_names()`：返回已实现自动检测的红线名称列表（audit 覆盖度展示用）
+- **v0.3 双集成面之 MCP Server（B1 阶段）**：
+  - `pyproject.toml` 新增 `[project.optional-dependencies]` 的 `mcp` 组（`fastmcp>=0.4.0`）
+  - `InProcessEngineInvoker`：MCP Server 用的同进程 typer app 调用（`src/devflow/adapters/invoker.py`）
+  - `mcp_server.py`：动态生成 MCP tool 函数（从 manifest 自动派生，含签名反射）
+  - `devflow-mcp-server` 入口脚本（pip install 后自动注册）
+  - 文档：[`docs/adapters/mcp.md`](./adapters/mcp.md) Claude Desktop / Cursor / Continue.dev 配置示例
+  - v0.3 INDEX 教训根治：manifest 从 cli.py 自动派生，零手写
+- **v0.3 三平台 Skill 适配层（B4 阶段）**：
+  - `src/devflow/adapters/claude_code.py` Claude Code Skill 生成器（SKILL.md + YAML frontmatter，无需 wrapper 脚本）
+  - `src/devflow/adapters/workbuddy.py` WorkBuddy Skill 生成器（JSON 文件）
+  - `src/devflow/adapters/codebuddy.py` CodeBuddy Skill 生成器（JSON 文件，含 tool / inputSchema）
+  - `src/devflow/adapters/skill_packager.py` `package_for_platform()` 平台分发入口
+  - CLI `devflow adapter-export <platform> --target <dir>`：导出 Skill manifest 到目标平台
+  - 共享 `SkillManifest` 中间表示，无 per-harness skill copies（obra/superpowers 范式）
+- **v0.3 SDD 子代理编排（B2 阶段）**：
+  - 数据模型：`DispatchConfig` / `SubagentTask` / `RulingRef` / `RulingType`（架构文档 §5.2.1）
+  - `RulingStore`：裁决落 `LedgerAction.RULING` 哈希链（4 类裁决：skip/replan/escalate/halt）
+  - `CircuitBreaker`：5 轮断路器 + 用户 halt 优先
+  - `AgentRunner` 抽象 + 3 实现：MockAgentRunner（测试桩）/ ClaudeCodeAgentRunner / GenericAgentRunner
+  - `Dispatcher.dispatch_task()` 主循环 + `DispatchResult`
+  - `dispatch_plan()` 顺序派发
+  - `dispatch_plan_parallel()` 拓扑分层 + asyncio.gather（架构文档 §5.2.1 #3）
+  - CLI `devflow dispatch <plan_id> [--real-agent] [--parallel]`：SDD 派发入口
+  - `create_dispatcher()` 工厂函数（含 GateRunner / ReviewEngine / AgentRunner 注入）
+- **v0.3 DAG 环检测（B5 阶段，SDD 前置）**：
+  - `src/devflow/util/dag.py` `detect_cycle()` DFS + 三色标记（pure function）
+  - `Plan.model_validator` 自动校验 DAG（构造期拦截环）
+  - `Plan.validate_dag()` 显式方法
+  - 修复架构文档 §16.0 v0.2 待做项（Task.blocked_by 环检测）
+- **v0.3 Model 选型从 sop.yaml 读取（B6 阶段）**：
+  - `ModelTiersConfig`：implementer / reviewer / escalator 默认 sonnet / haiku / opus
+  - `SDConfig`：max_rounds / parallel / worktree_per_task
+  - `sop.yaml` 新增 `sd:` 配置节（向前兼容，旧 sop.yaml 用默认值）
+  - `_dispatch_config_from_sop()` 字段映射
+  - `create_dispatcher()` 自动 fallback 到 sop.yaml 文件
+- **v0.3 适配层纪律（A2 阶段）**：
+  - `src/devflow/adapters/__init__.py` 写入 v0.3 纪律（4 禁 3 允）
+- **v0.3 CLI 接口契约注释（A1 阶段）**：
+  - `src/devflow/cli.py` 顶部加入接口契约（输入/输出/门禁/协议约束）
+- **v0.3 工具函数（C1 阶段）**：
+  - `src/devflow/util/json_schema.py` Python 类型 → JSON Schema 类型映射（str/int/float/bool/Optional/Path）
+- **v0.3 Skill manifest 自动派生（C3 阶段）**：
+  - `src/devflow/adapters/manifest.py` SkillManifest / SkillArg 数据模型
+  - `src/devflow/adapters/manifest_builder.py` `build_manifests_from_cli()` 自动从 typer app 派生
+- 新增 105 个测试（json_schema × 11 + invoker × 6 + manifest_builder × 8 + mcp_server × 4 + dag × 12 + plan_dag × 11 + dispatcher_models × 12 + circuit_breaker × 8 + agent_runner × 6 + dispatcher × 6 + dispatch_plan × 4 + dispatch_parallel × 6 + dispatch_config_from_sop × 9 + skill_packager × 9 + 其他）
+
+### Changed
+- README 头部版本号 v0.2 → v0.3.3；测试数量 76 → 121 → 196 → 279；架构图红线描述更新（11 红线 + 9 思维检查）
+- README「限制与残余风险」更新：标记 v0.3.x 已修复项,残余 P1 指向 audit-ledger
+- README「知识图谱」章节精简：移除 commit hook 自动更新说明（已撤回），保留图谱产物与手动更新方法
+- `Plan` 模型加 `model_validator` 强制 DAG 校验（B5 阶段补强，v0.2 待做项）
 
 ### Changed
 - README 头部版本号 v0.2 → v0.3.3；测试数量 76 → 121；架构图红线描述更新（11 红线 + 9 思维检查）

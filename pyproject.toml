@@ -19,9 +19,16 @@ dependencies = [
 dev = [
     "pytest>=7.0",
 ]
+mcp = [
+    "fastmcp>=0.4.0",
+]
+all = [
+    "devflow[dev,mcp]",
+]
 
 [project.scripts]
 devflow = "devflow.cli:app"
+devflow-mcp-server = "devflow.adapters.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

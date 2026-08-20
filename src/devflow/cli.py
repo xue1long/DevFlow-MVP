@@ -2,6 +2,31 @@
 
 纯薄门面：解析参数 → 调引擎 → 输出 JSON。
 不包含任何业务逻辑。
+
+================================================================================
+DevFlow CLI 接口契约 v0.3.3 (A1 — 规范纪律)
+================================================================================
+
+【输入约定】
+- 所有命令接受 --help / -h
+- 参数命名：snake_case，Typer 自动转换 --task-id → --task_id
+- 工作目录：cwd 即为 workspace_root
+- 错误返回：{"ok": False, "message": "<原因>"}，exit code ≠ 0
+
+【输出约定】
+- 所有命令通过 _output() 输出 JSON
+- 成功：{"ok": True, "data": {...}}
+- 失败：{"ok": False, "message": "<原因>", "error_code": "<class>"}
+
+【门禁约束】
+- 阶段门禁由 PhaseStateMachine 校验，不在 CLI 层
+- CI/Skill/MCP 调用方应消费 JSON，不要解析 stdout 文本
+
+【协议约束】（v0.3 双集成面契约）
+- CLI 是 devflow 唯一当前集成面
+- Skill manifest 必须从本文件自动派生（禁止手写，v0.3 INDEX 教训）
+- MCP Server / SDD 编排待 B 阶段择机重启
+================================================================================
 """
 from __future__ import annotations
 
@@ -12,7 +37,8 @@ from typing import Optional
 
 import typer
 
-from .storage.fs_backend import FSBackend
+from .storage.base import StorageBackend
+from .storage.fs_backend import FSBackend  # noqa: F401  re-export for tests/clients
 from .storage.git_port import SystemGitPort
 from .storage.review_store import ReviewStore
 from .policy.loader import load_sop
@@ -41,8 +67,18 @@ def _get_config():
     return load_sop(sop_path)
 
 
-def _get_machine() -> tuple[PhaseStateMachine, FSBackend, 'SOPConfig']:
-    storage = FSBackend(_get_root())
+def _get_storage() -> StorageBackend:
+    """Phase A: 唯一的 CLI 侧 FSBackend 实例化点.
+
+    引擎层（state_machine / review_engine / redline_auditor）只依赖
+    StorageBackend 抽象接口，本 helper 是唯一的 concrete 实例化位置，
+    也是 Phase C（fixture 切到 MemoryStorageBackend）时唯一需要改动的地方。
+    """
+    return FSBackend(_get_root())
+
+
+def _get_machine() -> tuple[PhaseStateMachine, StorageBackend, 'SOPConfig']:
+    storage = _get_storage()
     config = _get_config()
     git = SystemGitPort(_get_root())
     review_engine = _get_review_engine(storage, config)
@@ -51,7 +87,7 @@ def _get_machine() -> tuple[PhaseStateMachine, FSBackend, 'SOPConfig']:
     return machine, storage, config
 
 
-def _get_review_engine(storage: FSBackend, config: 'SOPConfig') -> ReviewEngine:
+def _get_review_engine(storage: StorageBackend, config: 'SOPConfig') -> ReviewEngine:
     """组装 ReviewEngine"""
     review_store = ReviewStore(_get_root())
     return ReviewEngine(storage, config, review_store)
@@ -72,7 +108,7 @@ def init():
     """
     import sys
     root = _get_root()
-    storage = FSBackend(root)
+    storage = _get_storage()
     default_sop = root / "config" / "sop.default.yaml"
     if default_sop.exists():
         sop_content = default_sop.read_text(encoding="utf-8")
@@ -120,6 +156,42 @@ def approve(spec_id: str):
     _output(result)
 
 
+def _run_intake_wizard(gate_result: dict) -> None:
+    """Intake 闸门拒绝时的交互式向导(P1-17)
+
+    设计取舍:不抽象为 wizard.py 模块,因为 MVP 只有一个向导场景;
+    若 v0.4+ 出现多个 wizard 场景,再考虑抽出。
+    """
+    # P1-17 fix: 用 [WARN] 替代 emoji,兼容 Windows GBK 控制台
+    typer.echo(f"\n[WARN] {gate_result['message']}\n")
+
+    # P1-17 fix: 用 click.Choice 而非 typer.Choice(typer 没暴露 Choice)
+    import click
+    action = typer.prompt(
+        "请选择动作 [a] 升级为 ready-for-agent / [m] 标记为 wontfix / [q] 退出",
+        type=click.Choice(["a", "m", "q"]),
+    )
+
+    if action == "q":
+        raise typer.Exit(code=0)
+
+    machine, storage, _ = _get_machine()
+    triage_state = {
+        "a": "ready-for-agent",
+        "m": "wontfix",
+    }[action]
+
+    # 写 triage 账本条目(供 next_phase 重检)
+    from .model import LedgerEntry, LedgerAction
+    storage.append_ledger(LedgerEntry(
+        phase=0,
+        action=LedgerAction.TRIAGE,
+        details=f"wizard 触发:triage_state={triage_state}",
+    ))
+
+    typer.echo(f"[OK] 已更新 triage_state={triage_state},可重试 devflow next")
+
+
 @app.command()
 def next():
     """推进到下一阶段"""
@@ -130,6 +202,12 @@ def next():
             _output(resume_result)
             return
     result = machine.next_phase()
+
+    # P1-17: ready-for-human 触发 wizard 交互式向导
+    if not result.get("ok") and result.get("wizard"):
+        _run_intake_wizard(result)
+        return
+
     _output(result)
 
 
@@ -231,7 +309,7 @@ def audit():
     v0.3.1-r2 P1-5 改进:返回 total_real/total_skipped/coverage 字段,
     让用户区分真实违规与 stub 红线。旧字段 total/active 保留兼容。
     """
-    storage = FSBackend(_get_root())
+    storage = _get_storage()
     config = _get_config()
     git = SystemGitPort(_get_root())
     auditor = RedLineAuditor(storage.root, config, git=git)
@@ -307,7 +385,7 @@ def review_audit():
     不修改 review_engine.py 写入点(避免 5 处漏算风险)。
     单 spec 工作流下准确;多 spec 场景需 v0.4 完整方案。
     """
-    storage = FSBackend(_get_root())
+    storage = _get_storage()
     review_store = ReviewStore(_get_root())
 
     ledger = storage.get_ledger()
@@ -476,7 +554,7 @@ def archive(
     from datetime import datetime
 
     root = _get_root()
-    storage = FSBackend(root)
+    storage = FSBackend(root)  # noqa: needs concrete specs_dir; Phase C candidate
     if spec_id is None:
         spec_id = storage.get_current_spec_id()
         if spec_id is None:
@@ -517,7 +595,7 @@ def archive(
 def list_active():
     """列出活跃 Spec（status != archived）"""
     root = _get_root()
-    storage = FSBackend(root)
+    storage = FSBackend(root)  # noqa: needs concrete specs_dir; Phase C candidate
     active = []
     for spec_path in storage.specs_dir.glob("*.yaml"):
         data = storage.read_spec(spec_path.stem)
@@ -536,7 +614,7 @@ def list_active():
 def list_archived():
     """列出已归档 Spec（status=archived）"""
     root = _get_root()
-    storage = FSBackend(root)
+    storage = FSBackend(root)  # noqa: needs concrete specs_dir; Phase C candidate
     archived = []
     for spec_path in storage.specs_dir.glob("*.yaml"):
         data = storage.read_spec(spec_path.stem)
@@ -560,7 +638,7 @@ def find(
     第一性方案：用 Python 直接扫描文件，无需新建索引。
     """
     root = _get_root()
-    storage = FSBackend(root)
+    storage = FSBackend(root)  # noqa: needs concrete specs_dir; Phase C candidate
     results = []
     keyword_lower = keyword.lower()
 
@@ -615,6 +693,97 @@ def find(
         "total": len(results),
         "results": results,
     })
+
+
+@app.command(name="dispatch")
+def dispatch(
+    plan_id: str = typer.Argument(..., help="Plan ID"),
+    real_agent: bool = typer.Option(False, "--real-agent", help="使用真实 Agent (ClaudeCode) 而非 Mock"),
+    parallel: bool = typer.Option(False, "--parallel", help="并行派发（B2.6 / M6 阶段）"),
+) -> None:
+    """SDD 子代理编排：派发 Plan 内所有 Task
+
+    v0.3 B2.5-B2.6 阶段：架构文档 §5.2.1 SDD 执行模式
+
+    Examples:
+        # 测试 / dry-run（默认 MockAgentRunner + 顺序派发）
+        devflow dispatch plan-spec-1
+
+        # 真实 Agent（需安装 claude CLI）
+        devflow dispatch plan-spec-1 --real-agent
+
+        # 并行派发（需 Plan DAG 合法）
+        devflow dispatch plan-spec-1 --parallel
+    """
+    import asyncio
+    from .engine.dispatcher import (
+        create_dispatcher,
+        dispatch_plan,
+        dispatch_plan_parallel,
+    )
+
+    root = Path.cwd()
+    dispatcher = create_dispatcher(root, use_real_agent=real_agent)
+
+    try:
+        if parallel:
+            result = asyncio.run(dispatch_plan_parallel(dispatcher, plan_id))
+        else:
+            result = asyncio.run(dispatch_plan(dispatcher, plan_id))
+        _output({
+            "ok": True,
+            "plan_id": plan_id,
+            "real_agent": real_agent,
+            "parallel": parallel,
+            "task_count": len(result.get("results", [])),
+            "results": result.get("results", []),
+        })
+    except ValueError as e:
+        _output({"ok": False, "message": str(e)})
+        raise typer.Exit(code=1)
+    except RuntimeError as e:
+        _output({"ok": False, "message": str(e), "error_type": "dag_deadlock"})
+        raise typer.Exit(code=1)
+
+
+@app.command(name="adapter-export")
+def adapter_export(
+    platform: str = typer.Argument(..., help="目标平台: claude-code / workbuddy / codebuddy"),
+    target: Path = typer.Option(Path("./skills"), "--target", help="生成目录"),
+) -> None:
+    """导出 Skill manifest 到目标平台
+
+    v0.3 B4.4 阶段：架构文档 §6 双集成面
+
+    Manifest 自动从 cli.py 派生（v0.3 INDEX 教训：禁止手写）。
+
+    Examples:
+        # Claude Code Skills
+        devflow adapter-export claude-code --target ~/.claude/skills/devflow
+
+        # WorkBuddy Skills
+        devflow adapter-export workbuddy --target ./workbuddy-skills
+
+        # CodeBuddy Skills
+        devflow adapter-export codebuddy --target ./codebuddy-skills
+    """
+    from .adapters.skill_packager import package_for_platform
+    from .adapters.manifest_builder import build_manifests_from_cli
+
+    try:
+        manifests = build_manifests_from_cli(app)
+        generated = package_for_platform(platform, manifests, target)
+        _output({
+            "ok": True,
+            "platform": platform,
+            "target": str(target),
+            "manifest_count": len(manifests),
+            "generated_count": len(generated),
+            "generated_files": [str(p) for p in generated[:5]],  # 前 5 个示例
+        })
+    except ValueError as e:
+        _output({"ok": False, "message": str(e)})
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

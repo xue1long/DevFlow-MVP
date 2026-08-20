@@ -23,6 +23,7 @@
 | [devflow-mvp-brief.md](./devflow-mvp-brief.md) | — | MVP 实现简报（功能清单 + 验收） |
 | [review-loop-v0.2-design.md](./review-loop-v0.2-design.md) | v0.2 | 审核闭环 v0.2 设计（review/fix/历史） |
 | [mvp-gate-degradation-matrix-v0.1.md](./mvp-gate-degradation-matrix-v0.1.md) | v0.1 | MVP 阶段门禁降级矩阵 |
+| [adapters/mcp.md](./adapters/mcp.md) | v0.3 | MCP Server 配置指南（Claude Desktop / Cursor / Continue.dev） |
 
 ## 审计与流程
 
@@ -53,7 +54,9 @@ devflow/
 │   ├── devflow-mvp-brief.md
 │   ├── devflow-first-audit-report-v0.1.md
 │   ├── mvp-gate-degradation-matrix-v0.1.md
-│   └── review-loop-v0.2-design.md
+│   ├── review-loop-v0.2-design.md
+│   └── adapters/
+│       └── mcp.md          ← MCP Server 配置指南
 ├── src/devflow/           ← 源代码
 ├── tests/                 ← 测试
 ├── config/                ← SOP 默认配置
