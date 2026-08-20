@@ -21,10 +21,11 @@ env/
 htmlcov/
 
 # DevFlow 运行时产物（由 devflow init 生成的用户工作区不应入库）
+# 注意: CONTEXT.md 不再忽略 —— v0.3.4 起它是引擎自身的布局规范文档,
+#       需随仓库入库。用户项目里由 init 生成的词汇表是否入库由用户决定。
 specs/
 plans/
 progress.yaml
-CONTEXT.md
 sop.yaml
 handoff-*.md
 
