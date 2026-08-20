@@ -6,6 +6,27 @@
 
 ## [Unreleased]
 
+### Added
+- **v0.4.0 路径策略配置化（2026-08-20）**：
+  - 新建 `src/devflow/storage/layout.py`：`LayoutPaths` + `resolve_layout()`，路径从 `sop.yaml` `storage:` 节读取而非硬编码
+  - `FSBackend` / `ReviewStore` / `MemoryReviewBackend` 统一接入 layout
+  - `cli.py` 中 `ReviewStore` 复用 `storage.layout`（消除双实例漂移）
+  - `state_machine.py` `artifact_refs` 从 `layout.artifact_refs()` 取
+  - **改路径 = 改 sop.yaml 一行配置，不动引擎代码**（默认值 `docs/devflow/specs` 等）
+  - 测试走 `storage.layout` 接口，不写死路径
+  - 详见 [`docs/v0.4-roadmap-paused.md`](./v0.4-roadmap-paused.md) 预案 C 落地变体
+
+### Changed
+- **review-audit 从单 spec 升级为多 spec 全面版（2026-08-19）**：
+  - `src/devflow/engine/review_audit.py` 新增 316 行完整实现：`ReviewAuditResult` 数据类 + 7 步审计循环
+  - `missing_in_ledger` 反向校验（review_store → ledger）——v0.3.1-r2 硬编码空列表，现真正实现
+  - `fix_orphans` / `fix_missing_in_ledger` 修复闭环双向 JOIN
+  - `per_spec_summary` 按 spec 分组统计
+  - 时间窗推断（`_infer_spec_id_for_ledger_entry`）替代字段扩展，不走扩 schema 老路
+  - 34 条测试锁定（`tests/test_review_audit.py`）
+  - 详见 [v0.4-roadmap-paused.md §二预案B](./v0.4-roadmap-paused.md)
+- **v0.3.4 路径策略重构（2026-08-20）**——见上方 Added 节
+
 ### Fixed
 - **v0.3.4 #39 根治**: `is_recognized_type()` 替代 `hint is not str`，消除 4 个 manifest 类型降级 warning
 - `pyproject.toml` 版本号同步到 0.3.4（从 0.1.0）

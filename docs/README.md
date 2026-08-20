@@ -14,7 +14,7 @@
 | [workspace-layout-v0.1.md](./workspace-layout-v0.1.md) | 设计 | v0.3 第一性方案 | 用户项目内 DevFlow 工作区目录结构（评审后采用 INDEX 替代） |
 | [v0.3-rejected-design.md](./v0.3-rejected-design.md) | 评审档案 | v0.3 | INDEX 复杂方案被 5 角色评审拒绝（已替代） |
 | [first-principles-sop.md](./first-principles-sop.md) | 元方法 | v0.1 | 第一性原理 4 阶段实践 |
-| [CHANGELOG.md](./CHANGELOG.md) | 变更日志 | — | v0.1 / v0.2 / v0.2.1 + Unreleased |
+| [CHANGELOG.md](./CHANGELOG.md) | 变更日志 | — | v0.1 / v0.2 / v0.2.1 / v0.3.1-r2 / v0.3.2 / v0.3.3 / v0.3.4 / v0.4.0 |
 
 ## 设计文档
 
@@ -47,6 +47,9 @@ devflow/
 │   ├── thinking-framework-mapping.md ← 24 思维 × 引擎机制映射
 │   ├── workspace-layout-v0.1.md
 │   ├── v0.3-rejected-design.md ← INDEX 方案评审档案
+│   ├── v0.4-rfc.md        ← v0.4 大重构 RFC（已回退）
+│   ├── v0.4-roadmap-paused.md ← v0.4 路线图（暂停待命）
+│   ├── audit-v04-risk-controller.md ← 第 6 轮风险管控者审计
 │   ├── first-principles-sop.md
 │   ├── CHANGELOG.md       ← 变更日志
 │   ├── audit-ledger.md    ← 审计整改台账

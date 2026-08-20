@@ -200,7 +200,8 @@ python -c "from devflow.storage.fs_backend import FSBackend; from pathlib import
 详见 [`docs/audit-ledger.md`](./docs/audit-ledger.md)（审计整改台账）：
 
 - v0.3.x 已修复：review 门禁默认禁用占位 ci_green（P1-2）、stub 红线显式标注（P1-5）、ci-status 命令（P1-9）、语言中性化（P1-11）、门禁结果持久化（P2-14）、timestamp 时区化（P2-17）、9 条思维模型检查（v0.3.3）。
-- 残余 P1：账本缺 actor/session_id（P1-10，v0.4 待做）、review 报告与账本无交叉校验（P1-13，单 spec 版已落地，多 spec 待 v0.4）——详见 audit-ledger 第 3/5/6 轮。
+- v0.3.4 已落地：多 spec review-audit 全面版（含 missing_in_ledger 反向校验，不再等 v0.4）、路径策略配置化（改路径只需改 sop.yaml）。
+- 残余 P1：账本缺 actor/session_id（P1-10，等审计合规需求触发）——详见 audit-ledger 第 3/5/6 轮。
 - MVP 单进程使用：账本哈希链已实现，但并发文件锁不在 MVP 范围。
 
 ## 版本
@@ -210,6 +211,10 @@ python -c "from devflow.storage.fs_backend import FSBackend; from pathlib import
 - **v0.1** (4cb360d)：核心状态机 + 11 个 CLI 命令
 - **v0.2** (d20d25e / ec42f9e)：审核闭环 + 防死循环
 - **v0.2.1** (96dcab8 / 721bdff / f23acd8)：第 3 轮审计 P0/P1/P2 整改
+- **v0.3.1-r2** (15b736e)：最简替代修补（P1-2/P1-5/P1-9/P1-13 简化版）
+- **v0.3.2** (包含在 15b736e)：轻量修补（P2-14 门禁持久化 / P2-17 时区化 / P1-11 语言中性化 / P1-5 补强）
+- **v0.3.3** (包含在 15b736e)：思维模型落地（9 条思维检查内置）
+- **v0.3.4** (eeb90e2)：agent 就绪（#39 类型识别根治 + 多 spec review-audit 全面版 + 路径策略配置化）
 
 ## 相关文档
 
