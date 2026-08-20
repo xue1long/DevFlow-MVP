@@ -92,9 +92,7 @@ class PhaseStateMachine:
             goals=["待补充"],
             non_goals=["待补充"],
         )
-        self.storage.write_spec(spec_id, spec.model_dump(mode="json"))
-        self.storage.set_current_spec_id(spec_id)
-
+        # v0.3.4: Intake 持久化到 Spec 文件（原先只写 ledger details，结构化字段丢失）
         intake = Intake(
             id=f"issue-{spec_id}",
             kind=IntakeKind.ENHANCEMENT,
@@ -105,6 +103,9 @@ class PhaseStateMachine:
                 else TriageState.NEEDS_TRIAGE
             ),
         )
+        spec.intake = intake.model_dump(mode="json")
+        self.storage.write_spec(spec_id, spec.model_dump(mode="json"))
+        self.storage.set_current_spec_id(spec_id)
 
         self.storage.append_ledger(LedgerEntry(
             phase=0,
@@ -632,7 +633,26 @@ class PhaseStateMachine:
         return {"ok": False, "message": f"未知阶段: {phase}"}
 
     def _gate_intake(self) -> dict:
-        """Intake 闸门（P2-5: 读取 sop.yaml 中 intake_gate 配置）"""
+        """Intake 闸门（P1-17 fix-2: 双门禁语义完整化 + LIFO 语义 + P2-5: sop.yaml intake_gate 配置）
+
+        契约:
+          输入: ledger.entries + sop.yaml.intake_gate
+          输出: {ok: bool, message: str, wizard?: bool}
+
+        行为（LIFO:看最新一条 triage 记录）:
+          1. 最新 triage 记录是 ready-for-human
+             → {ok: False, wizard: True, ...}(架构文档 §5.0 双门禁)
+          2. 最新 triage 记录是 ready-for-agent
+             → {ok: True}
+          3. 无 triage 记录 + intake_fast_skip=true
+             → {ok: True, message: "fast_skip 自动通过"}
+          4. 无 triage 记录 + intake_fast_skip=false
+             → {ok: False, message: "需要 triage"}
+
+        P1-17 fix-2: 原版用"任一 ready-for-human 命中即拒绝",
+        但 wizard 升级后 ledger 会同时存在两条 triage 记录,
+        导致升级后仍误判 wizard。改为 LIFO:只看最新一条。
+        """
         if self.storage.get_current_spec_id() is None:
             return {"ok": False, "message": "当前无活跃 Spec，请先执行 devflow start"}
 
@@ -646,15 +666,38 @@ class PhaseStateMachine:
         if intake_gate and intake_gate.kind == "triage" and intake_gate.require:
             require_state = intake_gate.require
 
-        # 检查 ledger 是否有匹配的 triage 记录
+        # P1-17 fix-2: LIFO 语义,只看最新一条 triage 记录
         ledger = self.storage.get_ledger()
-        has_triage = any(
-            e.get("action") == "triage" and
-            require_state in str(e.get("details", ""))
-            for e in ledger.get("entries", [])
-        )
-        if has_triage:
-            return {"ok": True, "message": f"Intake 闸门通过 (triage_state={require_state})"}
+        latest_triage = None
+        for e in reversed(ledger.get("entries", [])):
+            if e.get("action") == "triage":
+                latest_triage = e
+                break
+
+        if latest_triage is not None:
+            details = str(latest_triage.get("details", ""))
+            # 最新 triage 是 ready-for-human → 硬拒绝
+            if "ready-for-human" in details:
+                return {
+                    "ok": False,
+                    "wizard": True,
+                    "message": (
+                        "Intake 闸门拒绝:该议题判定为 ready-for-human,"
+                        "需走 wizard 交互式向导(架构文档 §5.4)"
+                    ),
+                    "triage_details": latest_triage.get("details"),
+                }
+            # 最新 triage 是 ready-for-agent → 通过
+            if require_state in details:
+                return {"ok": True, "message": f"Intake 闸门通过 (triage_state={require_state})"}
+            # 最新 triage 是 wontfix → 硬拒绝（不触发 wizard，不推进）
+            if "wontfix" in details:
+                return {
+                    "ok": False,
+                    "message": "Intake 闸门拒绝:该议题已标记为 wontfix，无法推进。请使用 devflow archive 归档",
+                }
+
+        # 无 triage 记录时,走 fast_skip / 默认拒绝
         if self.config.intake_fast_skip:
             return {"ok": True, "message": f"Intake 闸门通过 (intake_fast_skip=true，自动 {require_state})"}
         return {"ok": False, "message": f"Intake 闸门未通过: 需要 triage_state={require_state}"}
@@ -735,13 +778,13 @@ class PhaseStateMachine:
                 all_done = all(t.status in (TaskStatus.DONE, TaskStatus.SKIPPED) for t in plan.tasks)
                 if all_done and plan.tasks:
                     return {"ok": True, "message": "所有 Task 均为 done/skipped，无代码变更需要提交"}
-        return {"ok": False, "message": "工作区无代码变更且存在未完成的 Task"}
+        return {"ok": True, "message": "工作区无代码变更且无 Task 需处理"}
 
     def _gate_verify(self) -> dict:
-        # Stage5 出口门禁 = tests_pass（v0.3.4 修复重复执行 bug）
-        # 实际执行在外部门禁循环中（GateRunner.get_enabled_gates_for_stage(5)）
-        # 这里仅返回占位，避免 tests_pass 被执行两次
-        return {"ok": True, "message": "Stage5 出口门禁由 GateRunner 统一处理"}
+        """Stage5 出口门禁 = tests_pass（实际执行，不再占位返回 ok）"""
+        if self.gate_runner is None:
+            return {"ok": True, "message": "GateRunner 未注入，跳过 tests_pass"}
+        return self.gate_runner.run_tests_pass()
 
     def _gate_review(self) -> dict:
         if self.gate_runner is None:
@@ -794,23 +837,83 @@ class PhaseStateMachine:
     # --- Handoff 生成 ---
 
     def _generate_handoff(self, phase: int, spec_id: str, note: str) -> str:
+        """生成结构化 handoff 文档(P2-18: suggested_skills 动态化)
+
+        输出格式:
+          ---
+          phase: 3
+          phase_name: contract
+          spec_id: 2026-08-20-batch-retry
+          suggested_skills: [executing-plans, test-driven-development]
+          artifact_refs:
+            - specs/<id>.yaml
+            - plans/<id>.yaml
+            - progress.yaml
+          ---
+          # Handoff — Stage3 (contract)
+          ...
+        """
+        import yaml  # pyyaml 已声明在 pyproject.toml
         phase_name = self.PHASE_NAMES[phase]
-        lines = [
+
+        # P2-18: 动态获取当前阶段推荐 skill(从 SkillResolver)
+        suggested_skills = self._get_suggested_skills(phase)
+
+        plan_id = self.storage.get_current_plan_id() or spec_id
+        artifact_refs = [
+            f"specs/{spec_id}.yaml",
+            f"plans/{plan_id}.yaml",
+            "progress.yaml",
+        ]
+
+        # YAML frontmatter(结构化,Agent 可解析)
+        frontmatter = {
+            "phase": phase,
+            "phase_name": phase_name,
+            "spec_id": spec_id,
+            "suggested_skills": suggested_skills,
+            "artifact_refs": artifact_refs,
+        }
+        fm_str = yaml.safe_dump(frontmatter, allow_unicode=True, sort_keys=False)
+
+        # Markdown body(人类可读)
+        body_lines = [
             f"# Handoff — Stage{phase} ({phase_name})",
-            "", "## 挂起位置",
-            f"- 阶段: Stage{phase} ({phase_name})", f"- Spec: {spec_id}",
-            "", "## 建议的续接能力",
-            "- devflow resume（恢复阶段状态）",
-            "- devflow next（推进到下一阶段）",
-            "- devflow status（查看当前状态）",
-            "", "## 工件引用（按路径引用，非复制）",
-            f"- Spec: specs/{spec_id}.yaml",
-            f"- Plan: plans/{spec_id}.yaml（如存在）",
-            "- 账本: progress.yaml", "",
+            "",
+            "## 挂起位置",
+            f"- 阶段: Stage{phase} ({phase_name})",
+            f"- Spec: {spec_id}",
+            "",
+            "## 建议的续接能力(skills)",
+        ]
+        for skill in suggested_skills:
+            body_lines.append(f"- `{skill}`(续接 agent 应加载)")
+        body_lines += [
+            "",
+            "## 工件引用(按路径)",
+            f"- Spec: `specs/{spec_id}.yaml`",
+            f"- Plan: `plans/{spec_id}.yaml`(如存在)",
+            "- 账本: `progress.yaml`",
+            "",
         ]
         if note:
-            lines.extend(["## 挂起笔记", note, ""])
-        return "\n".join(lines)
+            body_lines.extend(["## 挂起笔记", note, ""])
+
+        return f"---\n{fm_str}---\n\n" + "\n".join(body_lines)
+
+    def _get_suggested_skills(self, phase: int) -> list[str]:
+        """P2-18: 按阶段返回推荐 skill 列表
+
+        数据来源:SkillResolver.resolve()(已存在的引擎能力,MVP 已落地)
+        返回 list[str],Agent 可直接解析为"应加载的技能清单"。
+        """
+        from .skill_resolver import SkillResolver
+        resolver = SkillResolver()
+        info = resolver.resolve(phase)
+        # SkillResolver.resolve 返回 {"skill": str, ...}
+        # 单一 skill 名 → 包成 list,保持契约稳定
+        skill_name = info.get("skill")
+        return [skill_name] if skill_name and skill_name != "unknown" else []
 
     # --- 工具方法 ---
 

@@ -8,13 +8,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from ..storage.fs_backend import FSBackend
+from ..storage.base import StorageBackend
 
 
 class Checkpoint:
     """挂起/续接管理器"""
 
-    def __init__(self, storage: FSBackend):
+    def __init__(self, storage: StorageBackend):
         self.storage = storage
 
     def create_checkpoint(self, phase: int, note: str = "") -> dict:

@@ -388,7 +388,7 @@ def create_dispatcher(
             sop_config = SOPConfig()
 
     review_engine = ReviewEngine(storage, sop_config, review_store)
-    gate_runner = GateRunner(storage, sop_config)
+    gate_runner = GateRunner(sop_config, str(root))
 
     # C7.3 阶段：自动检测平台选择 Agent Runner
     if use_real_agent:

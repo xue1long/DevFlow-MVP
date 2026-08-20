@@ -18,16 +18,14 @@ from devflow.model import Spec, Plan, Task
 from devflow.model.ledger import LedgerEntry, LedgerAction
 from devflow.model.review import ReviewReport, ReviewViolation, ReviewVerdict, ViolationSeverity, AxeReview
 from devflow.storage.fs_backend import FSBackend
-from devflow.policy.loader import load_sop
+from devflow.storage.memory_backend import MemoryStorageBackend
+from devflow.policy.loader import load_sop, load_sop_from_text
 from devflow.engine.state_machine import PhaseStateMachine
 from devflow.engine.redline_auditor import RedLineAuditor
 from devflow.storage.git_port import SystemGitPort
 
 
-@pytest.fixture
-def env(tmp_path):
-    storage = FSBackend(tmp_path)
-    storage.init_workspace("""sop:
+SOP = """sop:
   sop_version: "0.1"
   phases: [intake, brainstorm, plan, contract, implement, verify, review, finish]
   intake_fast_skip: true
@@ -39,7 +37,24 @@ def env(tmp_path):
   modules: {forbidden_import: ["internal/", "secret/"]}
   tooling: {proxy_strip: false}
   storage: {backend: fs}
-""")
+"""
+
+
+@pytest.fixture
+def env(tmp_path):
+    """Phase C: 内存后端 fixture（默认）。"""
+    storage = MemoryStorageBackend(tmp_path)
+    storage.init_workspace(SOP)
+    config = load_sop_from_text(SOP)
+    machine = PhaseStateMachine(storage, config)
+    return machine, storage, config, tmp_path
+
+
+@pytest.fixture
+def fs_env(tmp_path):
+    """P2-19 测试专用：必须有真件才能模拟'spec 文件被外部删除'。"""
+    storage = FSBackend(tmp_path)
+    storage.init_workspace(SOP)
     config = load_sop(tmp_path / "sop.yaml")
     machine = PhaseStateMachine(storage, config)
     return machine, storage, config, tmp_path
@@ -110,6 +125,71 @@ def test_p2_cross_module_import_precise_match(env):
     assert "ok_module.py" not in files  # 注释不应触发
 
 
+# --- v0.3.4: 红线自动验证 (#5) ---
+
+def test_redline_auto_verification_blocks_unfixed(fs_env):
+    """v0.3.4 #5 核心场景: 红线违规未真正修复时，fix() 不应标 resolved
+
+    真实场景: 创建一个跨模块 import 的 .py 文件，触发 cross_module_import 红线。
+    先注入一条假"已修复"报告（rule=cross_module_import），然后调用 fix()。
+    由于代码中依然有违规 import，RedLineAuditor 应能检测到 fresh_redline 包含
+    该规则，因此 fix() 必须标 unverified 而不是 resolved。
+    """
+    from devflow.model.review import ReviewReport, ReviewViolation, ViolationSeverity, AxeReview, ReviewVerdict
+    from devflow.storage.review_store import ReviewStore
+
+    machine, storage, config, tmp_path = fs_env
+    review_store = ReviewStore(tmp_path)
+
+    # 先 start 创建 spec 文件并设置 current_spec_id
+    machine.start("test redline scenario")
+    spec_id = storage.get_current_spec_id()
+    storage.set_current_spec_id(spec_id)
+
+    # 创建带违规 import 的文件（触发 cross_module_import 红线）
+    src = tmp_path / "src"
+    src.mkdir(exist_ok=True)
+    (src / "bad_module.py").write_text(
+        "from internal.submodule import helper\n", encoding="utf-8"
+    )
+
+    # 注入一条红线违规报告（rule=cross_module_import）
+    report = ReviewReport(
+        id="r1",
+        spec_id=spec_id,
+        round=1,
+        phase=2,
+        standards=AxeReview(
+            verdict=ReviewVerdict.FAIL,
+            violations=[
+                ReviewViolation(
+                    id="S-100",
+                    severity=ViolationSeverity.MAJOR,
+                    axis="standards",
+                    rule="cross_module_import",
+                    message="检测到违规 import",
+                ),
+            ],
+        ),
+    )
+    review_store.write_report(report)
+
+    from devflow.engine.review_engine import ReviewEngine
+    engine = ReviewEngine(storage, config, review_store)
+
+    # 不修复代码（bad_module.py 仍含违规 import）→ 直接调 fix()
+    result = engine.fix(["S-100"])
+
+    # v0.3.4 期望: 红线未修，标 unverified，禁止标 resolved
+    assert result["ok"] is False, (
+        f"v0.3.4 期望 fix() 检测到红线未修后返回失败，实际：{result}"
+    )
+    assert "S-100" in result.get("unverified", []), (
+        f"S-100 应进入 unverified 列表，实际：{result}"
+    )
+    assert "S-100" not in result.get("resolved", [])
+
+
 # --- P2-10: residual_count ---
 
 def test_p2_residual_count_not_dependent_on_resolved():
@@ -140,8 +220,9 @@ def test_p2_residual_count_not_dependent_on_resolved():
 
 # --- P2-19: resume 一致性验证 ---
 
-def test_p2_resume_detects_missing_spec(env):
-    machine, storage, _, tmp_path = env
+def test_p2_resume_detects_missing_spec(fs_env):
+    """Phase C: 此测试依赖磁盘文件真实存在（P2-19 resume 一致性验证 = 真件被外部删除的容错）。"""
+    machine, storage, _, tmp_path = fs_env
     machine.start("为 pipeline 增加 batch 重试，验证 P2-19 resume 一致性")
     # suspend 写 handoff
     machine.suspend("test handoff")

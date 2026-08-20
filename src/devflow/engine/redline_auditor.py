@@ -124,8 +124,10 @@ class RedLineAuditor:
         for p in patterns:
             p_lower = p.lower()
             if p_lower.startswith(".") or p_lower.endswith("."):
-                # 中缀模式(如 ".spec."):要求两侧都是分隔符
-                if p_lower in lower:
+                # 中缀模式(如 ".spec."):用词边界正则,要求两侧都是 / 或 . 或字符串边界
+                # Bug #30 fix: 子串匹配过宽(例如 ".spec." 会误中 "inspector"),
+                # 改用正则锚定到路径/扩展分隔符
+                if _re.search(rf"(^|[./]){_re.escape(p_lower)}([./]|$)", lower):
                     return True
             elif p_lower.startswith("_") or p_lower.endswith("_"):
                 # 下划线模式(如 "_test"):要求前面是 _ 或开头

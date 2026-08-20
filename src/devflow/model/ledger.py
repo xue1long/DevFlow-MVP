@@ -25,6 +25,7 @@ class LedgerAction(str, Enum):
     REVIEW = "review"
     FIX = "fix"
     ESCALATE = "escalate"
+    ARCHIVE = "archive"
 
 
 class LedgerEntry(BaseModel):

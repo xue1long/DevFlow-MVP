@@ -46,6 +46,7 @@ from .engine.state_machine import PhaseStateMachine
 from .engine.redline_auditor import RedLineAuditor
 from .engine.review_engine import ReviewEngine
 from .verify.gate_runner import GateRunner
+from .model import LedgerAction, LedgerEntry  # noqa: F401  — wizard 等内部使用
 
 app = typer.Typer(
     name="devflow",
@@ -156,11 +157,14 @@ def approve(spec_id: str):
     _output(result)
 
 
-def _run_intake_wizard(gate_result: dict) -> None:
+def _run_intake_wizard(gate_result: dict) -> Optional[dict]:
     """Intake 闸门拒绝时的交互式向导(P1-17)
 
     设计取舍:不抽象为 wizard.py 模块,因为 MVP 只有一个向导场景;
     若 v0.4+ 出现多个 wizard 场景,再考虑抽出。
+
+    Returns:
+        None (用户选 q 退出) 或 dict (重跑 next_phase 的结果,供 CLI 输出 JSON)
     """
     # P1-17 fix: 用 [WARN] 替代 emoji,兼容 Windows GBK 控制台
     typer.echo(f"\n[WARN] {gate_result['message']}\n")
@@ -173,7 +177,7 @@ def _run_intake_wizard(gate_result: dict) -> None:
     )
 
     if action == "q":
-        raise typer.Exit(code=0)
+        return None
 
     machine, storage, _ = _get_machine()
     triage_state = {
@@ -182,14 +186,16 @@ def _run_intake_wizard(gate_result: dict) -> None:
     }[action]
 
     # 写 triage 账本条目(供 next_phase 重检)
-    from .model import LedgerEntry, LedgerAction
     storage.append_ledger(LedgerEntry(
         phase=0,
         action=LedgerAction.TRIAGE,
         details=f"wizard 触发:triage_state={triage_state}",
     ))
 
-    typer.echo(f"[OK] 已更新 triage_state={triage_state},可重试 devflow next")
+    # v0.3.4: 重跑 next_phase 让状态落地,返回新结果给 next() 输出 JSON
+    advance_result = machine.next_phase()
+    typer.echo(f"[OK] 已更新 triage_state={triage_state},已重试 next_phase")
+    return advance_result
 
 
 @app.command()
@@ -205,7 +211,9 @@ def next():
 
     # P1-17: ready-for-human 触发 wizard 交互式向导
     if not result.get("ok") and result.get("wizard"):
-        _run_intake_wizard(result)
+        new_result = _run_intake_wizard(result)
+        if new_result is not None:
+            _output(new_result)
         return
 
     _output(result)
@@ -515,7 +523,7 @@ def archive(
     from datetime import datetime
 
     root = _get_root()
-    storage = FSBackend(root)  # noqa: needs concrete specs_dir; Phase C candidate
+    storage = _get_storage()
     if spec_id is None:
         spec_id = storage.get_current_spec_id()
         if spec_id is None:
@@ -556,7 +564,7 @@ def archive(
 def list_active():
     """列出活跃 Spec（status != archived）"""
     root = _get_root()
-    storage = FSBackend(root)  # noqa: needs concrete specs_dir; Phase C candidate
+    storage = _get_storage()
     active = []
     for spec_path in storage.specs_dir.glob("*.yaml"):
         data = storage.read_spec(spec_path.stem)
@@ -575,7 +583,7 @@ def list_active():
 def list_archived():
     """列出已归档 Spec（status=archived）"""
     root = _get_root()
-    storage = FSBackend(root)  # noqa: needs concrete specs_dir; Phase C candidate
+    storage = _get_storage()
     archived = []
     for spec_path in storage.specs_dir.glob("*.yaml"):
         data = storage.read_spec(spec_path.stem)
@@ -599,7 +607,7 @@ def find(
     第一性方案：用 Python 直接扫描文件，无需新建索引。
     """
     root = _get_root()
-    storage = FSBackend(root)  # noqa: needs concrete specs_dir; Phase C candidate
+    storage = _get_storage()
     results = []
     keyword_lower = keyword.lower()
 

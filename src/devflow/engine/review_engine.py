@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -20,8 +21,10 @@ from ..model.spec import Spec
 from ..model.plan import Plan
 from ..model.task import TaskStatus
 from ..storage.base import StorageBackend
-from ..storage.review_store import ReviewStore
+from ..storage.review_store_base import ReviewStorageBackend
 from ..policy.loader import SOPConfig
+from .standards_checks import run_all_standards_checks, ALL_STANDARD_RULES
+from .redline_auditor import RedLineAuditor
 
 
 class ReviewEngine:
@@ -34,9 +37,14 @@ class ReviewEngine:
     STAGNATION_THRESHOLD = 2
 
     # 可自动验证修复的规则（fix 时重跑检查确认真修好了）
-    AUTO_VERIFIABLE_RULES = {
-        "spec_completeness", "problem_length", "goals_required", "non_goals_required",
-        "task_module_empty", "task_acceptance_empty",
+    # 单一真相源：从 standards_checks.ALL_STANDARD_RULES 派生，消除 rule 名重复硬编码。
+    AUTO_VERIFIABLE_RULES = set(ALL_STANDARD_RULES)
+
+    # v0.3.4: 红线规则的自动验证集（仅含已实现 + 非 mvp_skip 的红线）
+    # 单一真相源：sop.yaml red_lines 中不跳过且有 checker 的规则
+    REDLINE_AUTO_VERIFIABLE_RULES: set[str] = {
+        "no_test", "cross_module_import", "huge_pr",
+        "uncommitted_bulk", "main_incomplete",
     }
 
     # Standards 轴检查规则
@@ -55,7 +63,7 @@ class ReviewEngine:
         self,
         storage: StorageBackend,
         config: SOPConfig,
-        review_store: ReviewStore,
+        review_store: ReviewStorageBackend,
     ):
         self.storage = storage
         self.config = config
@@ -120,7 +128,8 @@ class ReviewEngine:
         # 回归检测：当前轮违规是否与历史已修规则复发
         regression_warnings = self._detect_regression(spec_id, round, report)
         if regression_warnings:
-            report._regression_warnings = regression_warnings
+            # Bug #16: 写入正式字段而非私有属性，确保 model_dump()/持久化不丢失
+            report.regression_warnings = regression_warnings
 
         # 写入报告（P1-14: 默认禁止覆写已有报告，历史不可篡改）
         self.review_store.write_report(report)
@@ -186,7 +195,28 @@ class ReviewEngine:
         # 收集当前工件，用于重新验证
         artifacts = self._collect_artifacts(spec_id)
         verify_ok = artifacts.get("ok", False)
-        fresh_violations = self._run_standards_checks(artifacts) if verify_ok else []
+        # Bug #23 fix: 工件收集失败时不要静默放行(否则 fresh_violations 为空，
+        # 所有 AUTO_VERIFIABLE_RULES 违规都会被自动标记为已修复，未真正复检)
+        if not verify_ok:
+            return {
+                "ok": False,
+                "message": f"工件收集失败，无法验证修复: {artifacts.get('message', '未知错误')}",
+            }
+        fresh_violations = self._run_standards_checks(artifacts)
+
+        # v0.3.4: 红线违规也需自动验证。RedLineAuditor.audit() 只读、无副作用，
+        # 返回 skip=True 的违规（mvp_skip/stub/not_implemented）应忽略。
+        # ReviewEngine 不持有 git 实例，传入 None 即可（多数红线不依赖 git）。
+        try:
+            redline_auditor = RedLineAuditor(
+                self.storage.root, self.config, git=None
+            )
+            fresh_redline = [
+                v for v in redline_auditor.audit()
+                if not v.skip  # 排除 mvp_skip/stub/not_implemented
+            ]
+        except Exception:
+            fresh_redline = []  # 红线检查不可用时不阻塞
 
         for vid in violation_ids:
             violation = latest.get_violation(vid)
@@ -204,6 +234,14 @@ class ReviewEngine:
             if violation.rule in self.AUTO_VERIFIABLE_RULES:
                 still_present = any(
                     fv.rule == violation.rule for fv in fresh_violations
+                )
+                if still_present:
+                    unverified.append(vid)
+                    continue
+            # v0.3.4: 红线规则也走自动验证（仅限已实现检测的规则）
+            elif violation.rule in self.REDLINE_AUTO_VERIFIABLE_RULES:
+                still_present = any(
+                    rv.rule == violation.rule for rv in fresh_redline
                 )
                 if still_present:
                     unverified.append(vid)
@@ -235,7 +273,7 @@ class ReviewEngine:
             residual_violations=residual_list,
             summary=summary or f"修复了 {len(resolved)} 条违规，登记了 {len(residual_list)} 条残余风险",
         )
-        self.review_store.write_fix(fix)
+        self.review_store.write_fix(fix, spec_id)
 
         # 更新报告（仅维护 resolved 状态，使用专用更新方法）
         self.review_store.update_report(latest)
@@ -352,105 +390,13 @@ class ReviewEngine:
         }
 
     def _run_standards_checks(self, artifacts: dict) -> list[ReviewViolation]:
-        """执行 Standards 轴自动检查"""
-        violations = []
-        spec_data = artifacts.get("spec_data", {})
+        """执行 Standards 轴自动检查（委托给 engine.standards_checks）
 
-        # 检查 1: Spec 必填字段是否齐全
-        try:
-            spec = Spec(**spec_data) if spec_data else None
-            if spec:
-                missing = spec.missing_required_fields()
-                if missing:
-                    violations.append(ReviewViolation(
-                        id="S-001",
-                        severity=ViolationSeverity.FATAL,
-                        axis="standards",
-                        rule="spec_completeness",
-                        message=f"Spec 必填字段缺失: {', '.join(missing)}",
-                        fix="补充 Spec 的必填字段",
-                    ))
-        except Exception as e:
-            # pydantic 校验失败时，从错误信息提取缺失字段
-            missing = []
-            for field in ("non_goals", "goals", "problem"):
-                if field in str(e):
-                    if field == "problem":
-                        missing.append("problem (≥10 字符)")
-                    elif field == "goals":
-                        missing.append("goals (非空列表)")
-                    elif field == "non_goals":
-                        missing.append("non_goals (至少 1 项)")
-            if not missing:
-                missing.append(f"解析错误: {e}")
-            violations.append(ReviewViolation(
-                id="S-001",
-                severity=ViolationSeverity.FATAL,
-                axis="standards",
-                rule="spec_completeness",
-                message=f"Spec 必填字段缺失: {', '.join(missing)}",
-                fix="补充 Spec 的必填字段",
-            ))
-
-        # 检查 2: problem 长度
-        if spec_data and len(spec_data.get("problem", "")) < 10:
-            violations.append(ReviewViolation(
-                id="S-002",
-                severity=ViolationSeverity.FATAL,
-                axis="standards",
-                rule="problem_length",
-                message="problem 字段不足 10 字符，无法准确描述问题",
-                fix="扩充 problem 描述至至少 10 字符",
-            ))
-
-        # 检查 3: goals 非空
-        if spec_data and not spec_data.get("goals"):
-            violations.append(ReviewViolation(
-                id="S-003",
-                severity=ViolationSeverity.FATAL,
-                axis="standards",
-                rule="goals_required",
-                message="goals 列表为空，需要至少 1 个目标",
-                fix="在 Spec 中补充 goals",
-            ))
-
-        # 检查 4: non_goals 非空
-        if spec_data and not spec_data.get("non_goals"):
-            violations.append(ReviewViolation(
-                id="S-004",
-                severity=ViolationSeverity.MAJOR,
-                axis="standards",
-                rule="non_goals_required",
-                message="non_goals 列表为空，缺少非目标定义",
-                fix="在 Spec 中补充 non_goals（至少 1 项）",
-            ))
-
-        # 检查 5: Plan 中的 Task 完整性
-        plan_data = artifacts.get("plan_data")
-        if plan_data:
-            plan = Plan(**plan_data) if plan_data else None
-            if plan and plan.tasks:
-                for i, task in enumerate(plan.tasks):
-                    if not task.module.strip():
-                        violations.append(ReviewViolation(
-                            id=f"S-{100 + i + 1:03d}",
-                            severity=ViolationSeverity.FATAL,
-                            axis="standards",
-                            rule="task_module_empty",
-                            message=f"Task '{task.id}' 的 module 为空",
-                            fix="为 Task 指定 module 字段",
-                        ))
-                    if not task.acceptance:
-                        violations.append(ReviewViolation(
-                            id=f"S-{200 + i + 1:03d}",
-                            severity=ViolationSeverity.MAJOR,
-                            axis="standards",
-                            rule="task_acceptance_empty",
-                            message=f"Task '{task.id}' 的 acceptance 为空",
-                            fix="为 Task 补充验收标准",
-                        ))
-
-        return violations
+        薄封装：保持 self._run_standards_checks(artifacts) 在 review()/fix()
+        两处的调用契约不变。实际逻辑见 standards_checks.run_all_standards_checks。
+        抽取不改变任何 id / rule / severity / axis / message / fix，保持字节级一致。
+        """
+        return run_all_standards_checks(artifacts)
 
     # --- P0-4: Spec 轴真实检查 ---
 
@@ -490,11 +436,14 @@ class ReviewEngine:
             if g in ("待补充", ""):
                 continue
             covered = False
+            goal_re = re.compile(rf"\b{re.escape(g)}\b")
             for t in plan_data.get("tasks", []):
                 title = t.get("title", "")
                 module = t.get("module", "")
                 acceptance = t.get("acceptance", [])
-                if g in title or g in module or any(g in a for a in acceptance):
+                # Bug #24 fix: 用词边界正则,避免 "do" in "do something" 这类过宽匹配
+                if (goal_re.search(title) or goal_re.search(module)
+                        or any(goal_re.search(a) for a in acceptance)):
                     covered = True
                     break
             if not covered:
@@ -812,7 +761,8 @@ class ReviewEngine:
         # P1-7: 使用未 resolved 的违规数，而非 total_violations（含已修复）
         counts = [r.total_violations - r.resolved_count for r in recent]
 
-        # 全部轮次都有违规 且 违规数没有严格下降
+        # 全部轮次都有违规 且 违规数不下降（持平/上升都算停滞）
+        # 契约:counts=[8,8] 视为停滞 → escalate（test_15 锁定）
         if all(c > 0 for c in counts):
             is_decreasing = all(
                 counts[i + 1] < counts[i]

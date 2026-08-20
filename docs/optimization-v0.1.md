@@ -1,13 +1,13 @@
 ---
-title: DevFlow 优化方案 v0.1（三建议）
-subtitle: 哈希字段断言 · 门禁统一出口 · find 测试补全
-version: 0.1
+title: DevFlow 优化方案 v0.1（四建议）
+subtitle: 哈希字段断言 · 门禁统一出口 · find 测试补全 · ReviewStore 可插拔 (deferred)
+version: 0.2
 date: 2026-08-20
-status: draft
+status: live
 target_release: v0.3.4
-estimated_effort: 0.5 person-days
-authors: 图谱审计产出
-tags: [devflow, 优化, 哈希链, 门禁, 测试]
+estimated_effort: 0.5 person-days + future ReviewStore work
+authors: 图谱审计产出 + Phase A + C 后续
+tags: [devflow, 优化, 哈希链, 门禁, 测试, 存储抽象, phase-c]
 related:
   - ./src/devflow/storage/fs_backend.py
   - ./src/devflow/engine/state_machine.py
@@ -502,7 +502,60 @@ def test_find_excludes_archived(env):
 | **一：哈希字段白名单断言** | P0 | 防止 P0 复发，开发阶段即捕获 schema 漂移 | ~20 行代码 + 3 测试 | 0.5h |
 | **二：review_gate 统一出口** | P1 | 消除硬编码 + 修复 tests_pass 重复执行 bug | ~40 行代码，~25 行删除 | 1h |
 | **三：find 测试补全** | P2 | 补齐 Plan/Review 搜索覆盖 + 消除 Duplicated Code | 3 新测试 + 2 重构 + 1 辅助函数 | 0.5h |
+| **四：ReviewStore 可插拔（已 live 2026-08-20）** + StorageBackend 拆三仓（deferred）| P1 | 17/20 测试切到内存 fixture + RFC §3.5 真触发再拆三仓 | `review_store_base.py` NEW + MemoryReviewBackend NEW + FS ReviewStore 重命名 + 1 行 engine 签名改动 | 1h 已落地 |
 
-**总工期**：约 2 小时（单人，含测试验证）
-**全量回归通过条件**：基线 127 test 全部 pass，新增 6 个 test 全部 pass（建议一 3 + 建议三 3）
-**后向兼容性**：✅ 三项全部零破坏（行为变化已在文档显式标注）
+**总工期**：约 2 小时（建议一/二/三）+ 1 小时（建议四 ReviewStore 部分已 live）+ v0.4 真复活时启动剩余 StorageBackend 拆分
+**全量回归通过条件**：基线 127 test 全部 pass（建议一/二/三）；Phase A + C + Plan C 后基线 162/162 PASS in 14.75s（test_review_loop.py 从 3.06s 加速到 1.83s，~40% 提速）
+**后向兼容性**：✅ 一/二/三全部零破坏（行为变化已在文档显式标注）；四 ReviewStore 部分零破坏（`ReviewStore = FSReviewBackend` 别名保留老 import）；StorageBackend 拆三仓 deferred
+
+---
+
+## 建议四（P1, **live 2026-08-20**）：ReviewStore / StorageBackend 可插拔矩阵
+
+> **状态**：live。已落地部分：ReviewStore 抽出 ReviewStorageBackend ABC + FSReviewBackend / MemoryReviewBackend 双实现（详见 `docs/review_store_split_research.md`）。
+> **剩余 deferred 部分**：v0.4 RFC §3.5 StorageBackend 拆 FileStore / LedgerStore / StateStore（仍待 trigger signal）。
+> **触发日期**：2026-08-20（与 Phase A + C 同次重构）
+
+### 已落地（Plan C, 2026-08-20）
+
+- `src/devflow/storage/review_store_base.py` → `ReviewStorageBackend` ABC（8 个 abstractmethod）
+- `src/devflow/storage/review_store.py` → `FSReviewBackend`（老 `ReviewStore = FSReviewBackend` 别名保留以兼容 Phase C 之前的所有 import）
+- `src/devflow/storage/review_store_memory.py` → `MemoryReviewBackend`（dict 模拟文件系统，P1-14 不变量保留）
+- `src/devflow/engine/review_engine.py:57` 改 `review_store: ReviewStorageBackend`（ABC 注入）
+- `tests/test_review_loop.py` 20 条测试中 17 条切到 `MemoryReviewBackend`（env fixture 默认）；3 条仍用 `FSReviewBackend`（fs_env fixture，断言真实 YAML 落地）
+
+**实测**：test_review_loop.py 1.83s（was 3.06s, **40% 加速**）。全量测试 162/162 PASS in 14.75s。
+
+### 仍 deferred：v0.4 RFC §3.5 StorageBackend 拆三仓
+
+详见 `docs/v0.4-roadmap-paused.md` 触发条件 + `docs/storage_backend_split_research.md` 推荐方案 D（接受伪原子 + `--repair` 工具）。
+
+#### 为什么仍 deferred
+
+1. **`storage_backend_split` 触发 v0.4 RFC 两个根问题未解决**：
+   - 跨仓（FileStore / LedgerStore / StateStore）写入顺序协议。
+   - 跨仓事务的 hash chain 连续性。
+2. **建议一（P0 hash field whitelist）必须先通过审计**：在 LedgerEntry 字段稳定性未保证前拆三仓会落入 v0.3 INDEX 那种 trap（先拆方案再做协议）。
+3. **当前痛点已大幅缓解**：Phase A + C + Plan C 后，7 个 fixture / 69 条测试切到内存后端，全量 162/162 PASS in 14.75s。`StorageBackend` 拆分不再是单点痛点。
+
+#### 触发条件（满足任一则重启 StorageBackend 拆分）
+
+- v0.4 RFC 真要复活，且回答了 `storage_backend_split_research.md` 列出的两个根问题。
+- 出现新的存储类型（如对象存储、远程 ledger）需要 `StorageBackend` 之外的可插拔层。
+- 用户报告多进程并发写 spec 产生数据竞争（方案 D 的 `--repair` 工具真派上用场）。
+
+#### 不要做的事
+
+- ❌ 在没有建议一（P0）通过审计前启动 StorageBackend 拆分。
+- ❌ 改 `LedgerEntry` schema（触发 P0 复发）。
+- ❌ 把 ReviewStore 与 StorageBackend 强制耦合（graph C29 已实证两者独立，强行耦合会反向增加 v0.4 拆分复杂度）。
+
+### 关联证据（图谱）
+
+- 社区 C8 "ReviewReport Counters + ReviewStore Filesystem Persistence"（post-Plan-C graph：FS 部分将减小）
+- 社区 C35 "Review Loop Test Corpus"（post-Plan-C graph：应增长 17+ 节点）
+- 新增预期：MemoryReviewBackend method surface 社区（与 graph C9 FSBackend method surface 同构）
+- 社区 C29 "LedgerEntry + StorageBackend ABC + FSBackend Trio"（仍未动，仍是 Plan B 目标）
+- hyperedge "v0.4 Falsified Core Designs (6th Audit Round)"
+
+下次 Reviewer 看到本节时，先 `git log docs/optimization-v0.1.md --oneline` 看 Plan C 的合并消息；再决定是否启动 Plan B。

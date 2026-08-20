@@ -2,6 +2,10 @@
 
 覆盖 v0.2 审核闭环的完整生命周期：
 review → fix → review → 终止判断。
+
+Plan C: ReviewStore 抽为 ReviewStorageBackend ABC，17/20 测试切到
+MemoryReviewBackend（fixture 默认），3/20 仍用 FSReviewBackend（断言
+真实 YAML 文件存在性）。
 """
 import sys
 from pathlib import Path
@@ -15,18 +19,16 @@ from devflow.model import Spec, SpecStatus, Plan, Task, TaskStatus, Contract
 from devflow.model.review import ReviewReport, FixRecord, ReviewVerdict, ViolationSeverity, AxeReview
 from devflow.model import LedgerEntry, LedgerAction
 from devflow.storage.fs_backend import FSBackend
-from devflow.storage.review_store import ReviewStore
-from devflow.policy.loader import load_sop, SOPConfig
+from devflow.storage.memory_backend import MemoryStorageBackend
+from devflow.storage.review_store import FSReviewBackend
+from devflow.storage.review_store_memory import MemoryReviewBackend
+from devflow.policy.loader import load_sop, load_sop_from_text, SOPConfig
 from devflow.engine.review_engine import ReviewEngine
 from devflow.engine.state_machine import PhaseStateMachine
 from devflow.verify.gate_runner import GateRunner
 
 
-@pytest.fixture
-def env(tmp_path):
-    """创建带 review_gate 配置的审核闭环测试环境"""
-    storage = FSBackend(tmp_path)
-    storage.init_workspace("""sop:
+SOP = """sop:
   sop_version: "0.1"
   phases: [intake, brainstorm, plan, contract, implement, verify, review, finish]
   intake_fast_skip: true
@@ -38,12 +40,33 @@ def env(tmp_path):
     review_gate: {kind: "review", blocking: true, enabled: true, bind_to_stage: 2, max_rounds: 5, require_clear: true}
   tooling: {proxy_strip: false}
   storage: {backend: fs}
-""")
-    config = load_sop(tmp_path / "sop.yaml")
-    review_store = ReviewStore(tmp_path)
+"""
+
+
+@pytest.fixture
+def env(tmp_path):
+    """Plan C 默认 fixture: MemoryStorageBackend + MemoryReviewBackend（无文件 I/O）
+
+    适用于不需要断言真实 YAML 文件存在性的所有测试。
+    """
+    storage = MemoryStorageBackend(tmp_path)
+    storage.init_workspace(SOP)
+    config = load_sop_from_text(SOP)
+    review_store = MemoryReviewBackend(tmp_path)
     engine = ReviewEngine(storage, config, review_store)
-    # v0.3.4: GateRunner 现在统一处理 review_gate，需注入 review_engine
-    from devflow.verify.gate_runner import GateRunner
+    gate_runner = GateRunner(config, str(tmp_path), review_engine=engine)
+    machine = PhaseStateMachine(storage, config, gate_runner=gate_runner, review_engine=engine)
+    return engine, storage, config, review_store, machine, tmp_path
+
+
+@pytest.fixture
+def fs_env(tmp_path):
+    """fs_env 例外 fixture: FSBackend + FSReviewBackend 真件 — 用于断言文件落地的 3 条测试。"""
+    storage = FSBackend(tmp_path)
+    storage.init_workspace(SOP)
+    config = load_sop(tmp_path / "sop.yaml")
+    review_store = FSReviewBackend(tmp_path)
+    engine = ReviewEngine(storage, config, review_store)
     gate_runner = GateRunner(config, str(tmp_path), review_engine=engine)
     machine = PhaseStateMachine(storage, config, gate_runner=gate_runner, review_engine=engine)
     return engine, storage, config, review_store, machine, tmp_path
@@ -90,9 +113,9 @@ def _create_spec_and_plan(env, complete_spec: bool = True):
 
 
 class TestReviewEngine:
-    def test_1_review_creates_report(self, env):
-        engine, storage, config, review_store, machine, root = env
-        spec_id, _ = _create_spec_and_plan(env)
+    def test_1_review_creates_report(self, fs_env):  # Plan C: fs_env 验证 .yaml 真的写出来了
+        engine, storage, config, review_store, machine, root = fs_env
+        spec_id, _ = _create_spec_and_plan(fs_env)
         result = engine.review(spec_id=spec_id)
         assert result["ok"]
         assert (root / "review" / spec_id / "r1.yaml").exists()
@@ -130,9 +153,9 @@ class TestReviewEngine:
         gate = engine.check_review_gate(spec_id)
         assert gate["ok"]
 
-    def test_6_fix_records_report(self, env):
-        engine, storage, config, review_store, machine, root = env
-        spec_id, _ = _create_spec_and_plan(env, complete_spec=False)
+    def test_6_fix_records_report(self, fs_env):  # Plan C: fs_env 验证 f1.yaml 真的写出来了
+        engine, storage, config, review_store, machine, root = fs_env
+        spec_id, _ = _create_spec_and_plan(fs_env, complete_spec=False)
         result = engine.review(spec_id=spec_id)
         latest = review_store.latest_report(spec_id)
         violations = [v for v in latest._all_violations()
@@ -155,9 +178,9 @@ class TestReviewEngine:
         assert fix_result["ok"]
         assert (root / "review" / spec_id / "f1.yaml").exists()
 
-    def test_7_round2_does_not_overwrite_r1(self, env):
-        engine, storage, config, review_store, machine, root = env
-        spec_id, _ = _create_spec_and_plan(env, complete_spec=True)
+    def test_7_round2_does_not_overwrite_r1(self, fs_env):  # Plan C: fs_env 验证 r1.yaml + r2.yaml 都落地
+        engine, storage, config, review_store, machine, root = fs_env
+        spec_id, _ = _create_spec_and_plan(fs_env, complete_spec=True)
         engine.review(spec_id=spec_id)
         engine.review(spec_id=spec_id)
         # 轮次自动递增

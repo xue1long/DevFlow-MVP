@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import os
+import sys
 import tempfile
 import time
 from datetime import datetime
@@ -84,12 +85,35 @@ class FSBackend(StorageBackend):
 
     @staticmethod
     def _process_alive(pid: int) -> bool:
-        """检查进程是否存活"""
-        try:
-            os.kill(pid, 0)
-            return True
-        except (OSError, PermissionError):
-            return False
+        """检查进程是否存活（跨平台）
+
+        v0.3.4 #18: Windows 下 os.kill(pid, 0) 总是抛 PermissionError
+        用 ctypes 调 OpenProcess 替代，确保 Windows 上锁不被绕过
+        """
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                from ctypes import wintypes
+                PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+                STILL_ACTIVE = 259
+                kernel32 = ctypes.windll.kernel32
+                handle = kernel32.OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+                )
+                if not handle:
+                    return False
+                exit_code = wintypes.DWORD()
+                kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+                kernel32.CloseHandle(handle)
+                return exit_code.value == STILL_ACTIVE
+            except Exception:
+                return False
+        else:
+            try:
+                os.kill(pid, 0)
+                return True
+            except (OSError, PermissionError):
+                return False
 
     # --- 原子写 ---
 
@@ -110,6 +134,15 @@ class FSBackend(StorageBackend):
                 f.flush()
                 os.fsync(fd)
             os.replace(tmp_path, path)
+            # v0.3.4 #33: POSIX 下 fsync 父目录，保证 rename 持久化
+            # Windows 下 MoveFileEx 语义不同，不需要此步骤
+            if os.name == "posix":
+                try:
+                    dir_fd = os.open(str(path.parent), os.O_RDONLY | os.O_DIRECTORY)
+                    os.fsync(dir_fd)
+                    os.close(dir_fd)
+                except (OSError, AttributeError):
+                    pass  # 不阻塞主流程
         except Exception:
             try:
                 os.unlink(tmp_path)
@@ -144,19 +177,41 @@ class FSBackend(StorageBackend):
             h.update(prev_hash.encode("utf-8"))
         return h.hexdigest()
 
-    def _verify_chain(self, entries: list[dict]) -> list[str]:
-        """验证哈希链完整性，返回验证失败的条目索引"""
+    def _verify_chain(self, entries: list[dict], chain_head: Optional[str] = None) -> list[str]:
+        """验证哈希链完整性，返回验证失败的条目索引
+
+        安全契约：一旦某条目哈希不匹配，必须用 computed（正确哈希）作为
+        下一条的 prev_hash，使后续条目必然验证失败，从而完整暴露篡改范围。
+        若使用 stored_hash，被篡改条目之后的合法条目仍可能"看起来"合法。
+        """
         failed = []
         prev_hash = None
         for i, entry in enumerate(entries):
             stored_hash = entry.get("_hash")
             if stored_hash is None:
                 failed.append(i)
+                # 缺失 hash 也破坏链：用 compute 时同样需要 prev_hash，但
+                # 既然该条已标记失败，下一条用 None 让它重新从零开始也对。
+                # 为保持"破坏链"语义，继续以 computed（若可计算）作为 prev。
+                prev_hash = None
                 continue
             computed = self._compute_entry_hash(entry, prev_hash)
             if stored_hash != computed:
                 failed.append(i)
-            prev_hash = stored_hash
+                # 关键：用 computed（正确）而非 stored_hash 作为下一条 prev，
+                # 确保所有下游条目都因 prev 错误而验证失败。
+                prev_hash = computed
+            else:
+                prev_hash = stored_hash
+        # 额外校验：链头必须等于最后一条的 _hash，否则 ledger["chain_head"]
+        # 字段自身被篡改（指向不存在/早期的条目）。
+        if entries and chain_head is not None:
+            last_hash = entries[-1].get("_hash")
+            if last_hash != chain_head:
+                # chain_head 不匹配：把最后一条也标记为失败
+                last_idx = len(entries) - 1
+                if last_idx not in failed:
+                    failed.append(last_idx)
         return failed
 
     # --- 初始化 ---
@@ -265,7 +320,7 @@ class FSBackend(StorageBackend):
             entries = ledger.get("entries", [])
             if not entries:
                 return {"ok": True, "message": "账本为空，无需验证"}
-            failed = self._verify_chain(entries)
+            failed = self._verify_chain(entries, ledger.get("chain_head"))
             if failed:
                 return {
                     "ok": False,
@@ -338,7 +393,25 @@ class FSBackend(StorageBackend):
 
     def write_handoff(self, phase: int, content: str) -> Path:
         path = self.root / f"handoff-{phase}.md"
-        path.write_text(content, encoding="utf-8")
+        # 原子写：避免崩溃产生损坏的半写文件（与 P0-1 一致）
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(
+            suffix=".md",
+            prefix=".tmp_handoff_",
+            dir=path.parent,
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(fd)
+            os.replace(tmp_path, path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         return path
 
     def read_handoff(self, phase: int) -> Optional[str]:
@@ -356,7 +429,11 @@ class FSBackend(StorageBackend):
                 return int(p.stem.split("-", 1)[1])
             except (ValueError, IndexError):
                 return -1
-        latest = max(handoffs, key=_phase)
+        # 过滤掉 phase 解析失败（-1）的文件，避免畸形文件名被错误地选为 latest
+        valid = [p for p in handoffs if _phase(p) >= 0]
+        if not valid:
+            return None
+        latest = max(valid, key=_phase)
         return _phase(latest), latest.read_text(encoding="utf-8")
 
     # --- 内部方法 ---

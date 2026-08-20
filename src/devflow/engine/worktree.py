@@ -26,7 +26,7 @@ def safe_id(plan_id: str) -> str:
     - 不能以 - 结尾
     - 不能含 .. 等
     """
-    safe = re.sub(r"[^a-z0-9-]", "-", plan_id.lower())
+    safe = re.sub(r"[^a-z0-9-\u4e00-\u9fff]", "-", plan_id.lower())
     safe = re.sub(r"-+", "-", safe).strip("-")
     return safe or "default"
 

@@ -76,7 +76,7 @@ def _parse_round_from_details(details: str) -> Optional[int]:
     """
     if not details:
         return None
-    m = re.search(r"R(\d+)", details)
+    m = re.search(r"\bR(\d+)\b", details)
     if m:
         return int(m.group(1))
     return None

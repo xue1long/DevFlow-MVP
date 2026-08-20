@@ -167,11 +167,11 @@ def _parse_sop_dict(raw: dict) -> SOPConfig:
         )
 
     # 解析 red_lines
-    raw_red_lines = sop_raw.pop("red_lines", [])
+    raw_red_lines = sop_raw.get("red_lines", [])
     red_lines = _parse_red_lines(raw_red_lines)
 
     # 解析 gates
-    raw_gates = sop_raw.pop("gates", {})
+    raw_gates = sop_raw.get("gates", {})
     gates = {}
     for name, gate_raw in raw_gates.items():
         if isinstance(gate_raw, dict):
@@ -181,7 +181,9 @@ def _parse_sop_dict(raw: dict) -> SOPConfig:
 
     # 构建配置（忽略未知字段——向前兼容）
     known_fields = set(SOPConfig.model_fields.keys())
-    filtered = {k: v for k, v in sop_raw.items() if k in known_fields}
+    # 排除 gates/red_lines——它们已从 sop_raw.get 提取，不重复传
+    filtered = {k: v for k, v in sop_raw.items() if k in known_fields
+                and k not in ("gates", "red_lines")}
     unknown = set(sop_raw.keys()) - known_fields - {"gates", "red_lines"}
     if unknown:
         warnings.warn(f"sop.yaml 包含未知字段（已忽略）: {unknown}")

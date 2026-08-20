@@ -52,6 +52,8 @@ class ClaudeCodeAgentRunner(AgentRunner):
     - 真实 Claude Code 集成待 B 阶段扩展时通过 `claude --help` 调研
     """
 
+    TIMEOUT = 120  # 秒，防止无限挂起
+
     def __init__(self, worktree_root: Optional[Path] = None):
         self.worktree_root = worktree_root
 
@@ -74,12 +76,21 @@ class ClaudeCodeAgentRunner(AgentRunner):
             cwd=cwd,
             env=env,
         )
-        stdout, stderr = await proc.communicate()
-        return {
-            "ok": proc.returncode == 0,
-            "output": stdout.decode(errors="replace"),
-            "error": stderr.decode(errors="replace"),
-        }
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=self.TIMEOUT
+            )
+            return {
+                "ok": proc.returncode == 0,
+                "output": stdout.decode(errors="replace"),
+                "error": stderr.decode(errors="replace"),
+            }
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return {"ok": False, "output": "", "error": "Agent 执行超时（120s）"}
+        except Exception as e:
+            return {"ok": False, "output": "", "error": str(e)}
 
 
 class GenericAgentRunner(AgentRunner):
@@ -88,6 +99,8 @@ class GenericAgentRunner(AgentRunner):
     适用场景：自定义 Agent 脚本（Python / Node.js / shell）
     协议：stdin 接收 KEY=VALUE 格式
     """
+
+    TIMEOUT = 120  # 秒
 
     def __init__(self, command: str, worktree_root: Optional[Path] = None):
         self.command = command
@@ -104,12 +117,21 @@ class GenericAgentRunner(AgentRunner):
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
         )
-        stdout, stderr = await proc.communicate(input=prompt_input.encode())
-        return {
-            "ok": proc.returncode == 0,
-            "output": stdout.decode(errors="replace"),
-            "error": stderr.decode(errors="replace"),
-        }
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=prompt_input.encode()), timeout=self.TIMEOUT
+            )
+            return {
+                "ok": proc.returncode == 0,
+                "output": stdout.decode(errors="replace"),
+                "error": stderr.decode(errors="replace"),
+            }
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return {"ok": False, "output": "", "error": "Agent 执行超时（120s）"}
+        except Exception as e:
+            return {"ok": False, "output": "", "error": str(e)}
 
 
 class MockAgentRunner(AgentRunner):

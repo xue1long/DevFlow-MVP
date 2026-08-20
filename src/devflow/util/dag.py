@@ -45,6 +45,12 @@ def detect_cycle(
     color: dict[str, int] = {nid: WHITE for nid in node_ids}
     parent: dict[str, Optional[str]] = {nid: None for nid in node_ids}
 
+    # 边界校验：node_ids 与 deps 必须等长
+    if len(node_ids) != len(deps):
+        raise ValueError(
+            f"detect_cycle: node_ids({len(node_ids)}) 与 deps({len(deps)}) 长度不一致"
+        )
+
     # 邻接表（仅保留有效节点）
     valid_ids = set(node_ids)
     graph: dict[str, list[str]] = {}

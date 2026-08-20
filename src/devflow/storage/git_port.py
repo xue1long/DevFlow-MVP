@@ -109,8 +109,11 @@ class SystemGitPort(GitPort):
                 continue
             # git status --porcelain 格式: "XY filename"
             filename = line[3:].strip()
+            # 模式都是 basename（如 ".env"、"*.pem"），用 basename 匹配以避免
+            # 路径前缀（如 "config/.env"）绕过检测。
+            basename = Path(filename).name
             for pattern in SENSITIVE_PATTERNS:
-                if fnmatch.fnmatch(filename, pattern):
+                if fnmatch.fnmatch(basename, pattern):
                     found.append(filename)
                     break
         return found

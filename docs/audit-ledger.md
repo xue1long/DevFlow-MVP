@@ -695,3 +695,90 @@ RFC 把 50%+ 工期（分代哈希 3d + 接口拆分 2d）投在 5-10% 用户价
 - ⚠️ 若未来有人把思维检查改 blocking,需重走审计（本台账第 5/6 轮教训: 扩 schema/改语义前先过第一性 SOP）
 
 ---
+
+## 第 7 轮审计
+
+### 审计来源
+
+自我审计（依据本台账反复出现的"代码 ↔ 架构文档"漂移模式）
+
+### 审计摘要
+
+- 致命缺陷：0 条
+- 重大隐患：2 条（R17-1 ready-for-human 静默通过 / R18-1 suggested_skills 硬编码）
+- 优化疏漏：0 条
+- 过度工程条目：0 条
+- 伪需求条目：0 条
+- 文件间一致性：✅ 通过（架构文档 §5.0 双门禁 / §5.2.1 suggested_skills 已落地）
+
+### 整改记录
+
+| 编号 | 风险 | 等级 | 处理状态 | 处理方式 | 说明 |
+|---|---|---|---|---|---|
+| **R17-1** | `ready-for-human` 议题静默通过 Intake 闸门 | ②重大隐患 | **已修复（P1-17）** | `_gate_intake()` 新增 ready-for-human 硬拒绝分支，返回 `wizard=True`；`cli.next` 触发交互式向导（`_run_intake_wizard`） | 修复位置：`state_machine.py:_gate_intake()` + `cli.py:_run_intake_wizard`；架构文档 §5.0 双门禁语义落地 |
+| **R17-2** | 缺失 wizard 模块，架构文档 §5.4 承诺落空 | ③优化疏漏 | **已修复（最小化）** | 不新增 `wizard.py` 模块，用 `cli.py` 内的 `_run_intake_wizard()` 函数实现（3 选项：`a` 升级/`m` 标记 wontfix/`q` 退出） | YAGNI：MVP 仅 1 个 wizard 场景；若 v0.4+ 出现多个场景再抽象 |
+| **R18-1** | `_generate_handoff()` 的"建议的续接能力"硬编码 3 个 CLI 命令，不按阶段动态推荐 | ②重大隐患 | **已修复（P2-18）** | 改用 `SkillResolver.resolve(phase)` 动态填充；handoff 文件改 `YAML frontmatter + Markdown body`，Agent 可结构化解析 | 修复位置：`state_machine.py:_generate_handoff` + 新增私有方法 `_get_suggested_skills`；复用已有 `engine/skill_resolver.py:13` 的 `PHASE_SKILLS` 字典 |
+| **R18-2** | handoff 文档非结构化，Agent 无法解析 suggested_skills | ③优化疏漏 | **已修复（最小化）** | 引入 YAML frontmatter（`phase` / `phase_name` / `spec_id` / `suggested_skills` / `artifact_refs`），body 保留 Markdown 人类可读 | 不引入新依赖（pyyaml 已声明在 `pyproject.toml`） |
+
+### 本轮修复产物
+
+- `src/devflow/engine/state_machine.py`
+  - `_gate_intake()` 新增 `wizard` 字段契约 + ready-for-human 硬拒绝分支
+  - `_generate_handoff()` 重构为 YAML frontmatter + Markdown body
+  - 新增 `_get_suggested_skills(phase)` 私有方法（复用 `SkillResolver`）
+- `src/devflow/cli.py`
+  - 新增 `_run_intake_wizard()` 函数（typer.prompt 交互）
+  - `next` 命令新增 wizard 触发分支
+- `tests/test_state_machine.py`
+  - 新增 3 个 P1-17 测试：`test_intake_gate_hard_rejects_ready_for_human` / `test_intake_gate_allows_ready_for_agent` / `test_intake_gate_fast_skip_passes_without_ledger`
+  - 新增 4 个 P2-18 测试：`test_handoff_has_yaml_frontmatter` / `test_handoff_suggested_skills_differs_by_phase` / `test_handoff_intake_skill_is_triage` / `test_handoff_includes_note_when_provided`
+
+### 残余风险清单
+
+1. **R17-2 残余**：wizard 是 CLI 内函数而非独立模块；若 v0.4+ 增加非 CLI Agent 宿主（HTTP API、MCP server），需重构为独立模块。**补偿措施**：v0.4 RFC 已规划 adapters/ 多平台适配层（架构文档 §15.8），届时统一处理。
+2. **R18-1 残余**：`SkillResolver.resolve()` 当前每个阶段仅返回 1 个 skill（`PHASE_SKILLS` 字典为单值结构），Agent 加载的技能列表较短。**补偿措施**：v0.4 可扩展为多 skill 列表（如 `[contract-validation, schema-design]`），本轮契约（`list[str]`）已预留扩展空间。
+3. **未审计的边界**：`_run_intake_wizard` 依赖 stdin/typer.prompt；非交互环境（CI 自动化）下可能挂起。**补偿措施**：建议 v0.4 增加 `--non-interactive` 标志 + 默认 action 配置项。
+
+### 本轮修改潜在副作用评估
+
+1. **`_gate_intake()` 输出新增 `wizard` 字段**：影响所有调用方。已确认 `cli.next` 和 `state_machine.next_phase()` 均有 `result.get("wizard")` 容错处理；现有 11 个状态机测试全部通过。
+2. **handoff 文档格式变更**：`fs_backend.find_latest_handoff()` 仅按文件 glob 读取内容，不解析格式 → 向后兼容。`state_machine.resume()` 仅取 phase 整数，不解析 frontmatter → 无回归。
+3. **未扩账本 schema**（本台账第 3 轮 P0-3 教训）：所有修复未改 `LedgerEntry` / `LedgerAction` / 哈希链结构 → 哈希链零风险。
+4. **未改 SOP 协议**：所有修复未动 `sop.yaml` / `SOPConfig` → 旧配置零破坏。
+
+### 全量回归
+
+**147 passed**（v0.3.3 基线 121 + 本轮新增 7 + 其他历史增量）
+
+### 审计视角的自我评估
+
+- ✅ 修复前先做第一性分析（"5 步拆解 + 根假设质疑"），避免过度工程
+- ✅ 修复前先查 `LedgerAction` / `SkillResolver` 是否已有能力（避免重造轮子，发现 3 个预判错误并纠正）
+- ✅ 分两轮修复（先 P1 安全门，后 P2 UX 增强），每轮独立可回滚
+- ✅ 未扩账本 schema、未改状态机阶段、未引入新依赖
+- ✅ 测试覆盖新增边界（ready-for-human 拒绝 / ready-for-agent 通过 / fast_skip 兼容 / YAML 结构 / 动态性 / 契约 / note 兼容）
+- ⚠️ wizard 是 CLI 内函数（MVP 合理，v0.4 需重构）
+- ⚠️ SkillResolver 每阶段仅 1 个 skill（契约预留扩展，未在 v0.3.x 实现）
+
+
+### Demo 发现的后续 bug（已在 demo 同步修复）
+
+| 编号 | 风险 | 等级 | 处理状态 | 处理方式 | 说明 |
+|---|---|---|---|---|---|
+| **R17-3** | wizard 升级后 `_gate_intake()` 仍误判 wizard | ②重大隐患 | **已修复（P1-17 fix-2）** | 改为 LIFO 语义：只看 ledger 最新一条 triage 记录，而非"任一 ready-for-human 命中即拒绝" | 原版用 `for e in entries` 遍历，wizard 升级后 ledger 同时含两条 triage，旧的 ready-for-human 仍触发硬拒绝。修复后 wizard 升级真正生效 |
+| **R17-4** | emoji 在 Windows GBK 控制台导致 `UnicodeEncodeError` | ③优化疏漏 | **已修复（最小化）** | 将 `⚠️` 替换为 `[WARN]`，`✅` 替换为 `[OK]` | 兼容 Windows GBK + 国际化控制台；保留语义清晰度 |
+| **R18-3** | `_run_intake_wizard` 使用 `typer.Choice`（typer 未暴露） | ②重大隐患 | **已修复** | 改用 `click.Choice`（typer 内部依赖） | 这是 Round 1 修复时漏掉的一个 import 路径错误，demo 才暴露 |
+
+### Demo 验证产物
+
+- ✅ `devflow init` → `devflow start` → 注入 ready-for-human → `devflow next` 触发 wizard
+- ✅ wizard 提示清晰（ASCII 兼容 GBK）
+- ✅ 用户选 `a` 后 ledger 追加新 triage 记录
+- ✅ 重试 `devflow next` → LIFO 修复生效 → 推进到 Stage1
+- ✅ `verify_ledger()` 通过（4 条条目哈希链完整）
+- ✅ 全量测试 **148 passed**
+
+### 审计视角的自我评估（更新）
+
+- ✅ **demo 验证发现 3 个修复时遗漏的 bug**（LIFO / GBK / click.Choice），符合第一性原则"先做后验"
+- ✅ 测试覆盖新增 LIFO 边界（wizard 升级后通过）

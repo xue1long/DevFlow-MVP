@@ -16,8 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from datetime import datetime, timezone
 
 from devflow.model.ledger import LedgerEntry, LedgerAction
-from devflow.storage.fs_backend import FSBackend
-from devflow.policy.loader import load_sop
+from devflow.storage.memory_backend import MemoryStorageBackend
+from devflow.policy.loader import load_sop_from_text
 from devflow.engine.redline_auditor import (
     RedLineAuditor, RedLineViolation, ViolationStatus,
 )
@@ -65,9 +65,10 @@ FULL_RED_LINES_SOP = """sop:
 
 @pytest.fixture
 def env(tmp_path):
-    storage = FSBackend(tmp_path)
+    """Phase C: 内存后端 fixture"""
+    storage = MemoryStorageBackend(tmp_path)
     storage.init_workspace(FULL_RED_LINES_SOP)
-    config = load_sop(tmp_path / "sop.yaml")
+    config = load_sop_from_text(FULL_RED_LINES_SOP)
     machine = PhaseStateMachine(storage, config)
     return machine, storage, config, tmp_path
 

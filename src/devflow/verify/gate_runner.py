@@ -57,14 +57,6 @@ class GateRunner:
             "message": f"ci_green 已执行 (exit code {result['returncode']})，advisory 不阻断",
         }
 
-    def run_intake_gate(self, triage_state: str, intake_fast_skip: bool) -> dict:
-        """执行 intake_gate 门禁"""
-        if intake_fast_skip:
-            return {"ok": True, "message": "intake_fast_skip 自动通过"}
-        if triage_state == "ready-for-agent":
-            return {"ok": True, "message": "Intake 闸门通过 (triage_state=ready-for-agent)"}
-        return {"ok": False, "message": f"Intake 闸门未通过: triage_state={triage_state}"}
-
     def run_gate_by_name(self, gate_name: str) -> dict:
         """按名称执行门禁"""
         gate = self.config.get_gate(gate_name)
@@ -161,7 +153,9 @@ class GateRunner:
                 "stdout": "",
                 "stderr": f"命令执行超时（超过 {timeout} 秒）: {command[:100]}",
             }
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
+            # v0.3.4 #38: 收窄异常类型。配置错误（如 timeout 是字符串）
+            # 会抛 TypeError，应向上传递让用户尽早发现
             return {"returncode": -1, "stdout": "", "stderr": str(e)}
 
     def _validate_command(self, command: str) -> Optional[str]:

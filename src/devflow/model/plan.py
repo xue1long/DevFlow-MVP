@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .task import Task
 from ..util.dag import detect_cycle
@@ -20,6 +20,10 @@ class Plan(BaseModel):
     v0.3.3 思维字段（宽松默认,可选）:
       buffer  冗余思维: 缓冲比例(0-1),预留安全垫,资源不排满
     """
+    # v0.3.4: 字段赋值后重跑校验（含 DAG 环检测），防止 plan.tasks.append /
+    # task.blocked_by = [...] 等突变引入循环依赖而未被检测
+    model_config = ConfigDict(validate_assignment=True)
+
     spec_id: str = Field(..., description="关联的 Spec ID")
     tasks: list[Task] = Field(default_factory=list)
     domain_ref: str = Field(default="", description="指向 DomainModel 的引用")

@@ -252,6 +252,103 @@
 | **"假设被推翻了吗？需要回退方案吗？"** | 复核假设 |
 | **"残余风险有补偿措施吗？下版本计划有吗？"** | 闭环 |
 
+### 3.4 Bug 模式库（来自 2026-08-20 P1-17 demo 实战）
+
+> **本节是"事后归纳",不是"事前规则"**。每个模式都来自一次真实 demo 暴露的 bug。
+> 团队遇到新 bug 时,**优先在这里追加一节**,让后人少踩一次。
+
+#### 模式 1:Append-only Ledger 的 LIFO 语义陷阱
+
+**症状**:ledger 是 append-only,wizard/升级/重试场景会产生多条同类型记录(如多条 `triage`),闸门逻辑遍历全部条目导致"旧记录仍生效"。
+
+**根因**:`for e in entries: if "ready-for-human" in str(e["details"]): return wizard` 这种遍历写法,把历史状态当成"当前状态"。
+
+**修复模板**:改为 LIFO(只看最新一条)或优先匹配最新状态:
+
+```python
+# 错误写法(把历史当状态)
+for e in ledger["entries"]:
+    if "ready-for-human" in str(e["details"]):
+        return reject()
+
+# 正确写法(LIFO 语义)
+latest = next(
+    (e for e in reversed(ledger["entries"]) if e["action"] == "triage"),
+    None,
+)
+if latest and "ready-for-human" in str(latest["details"]):
+    return reject()
+```
+
+**测试模板**:`test_intake_gate_lifo_priority_after_wizard_upgrade` —— 写 2 条同类型记录,断言"看最新"。
+
+**预防措施**:**任何遍历 ledger 的判定逻辑,先问"要不要 LIFO"**。append-only ledger 的"全部状态"和"当前状态"是两个不同概念。
+
+#### 模式 2:CLI 跨平台编码陷阱(emoji + GBK)
+
+**症状**:Windows 控制台默认 GBK 编码,`typer.echo("⚠️ message")` 触发 `UnicodeEncodeError: 'gbk' codec can't encode character '\u26a0'`。
+
+**根因**:emoji(Unicode BMP 之外,`U+1F000+`)在 GBK/CP1252 等传统编码中**不可表示**,不是"字符",是"字符编码之外的实体"。
+
+**修复模板**:用 ASCII 标签替代 emoji:
+
+```python
+# 错误:typer.echo(f"\n⚠️  {msg}\n")
+# 正确:typer.echo(f"\n[WARN] {msg}\n")
+typer.echo(f"✅ OK")  # 错
+typer.echo(f"[OK] done")  # 对
+```
+
+**测试模板**:断言输出**不含 BMP 之外的字符**(`ord(ch) > 0xFFFF`),而不是断言纯 ASCII —— 中文在 GBK 下可编码。
+
+```python
+for ch in output:
+    if ord(ch) > 0xFFFF:
+        pytest.fail(f"含 emoji/非 BMP 字符(GBK 会崩): {ch!r}")
+```
+
+**预防措施**:**所有用户可见消息,默认走 ASCII 标签**(`[WARN]` / `[OK]` / `[ERROR]`)。中文 body 可保留,但前缀必须 ASCII。
+
+#### 模式 3:第三方库的"看似存在"API
+
+**症状**:`type=typer.Choice([...])` 在 typer 9.x 下抛 `AttributeError: module 'typer' has no attribute 'Choice'`。
+
+**根因**:typer 是 click 的薄封装,**不重新导出所有 click 类型**。`typer.Choice` 不存在,要用 `click.Choice`。
+
+**修复模板**:不确定时**先 `import typer; dir(typer)` 检查实际 API**,或直接走底层 `click`:
+
+```python
+# 错误:import typer; typer.Choice(...)
+# 正确:
+import click
+typer.prompt("...", type=click.Choice(["a", "b"]))
+```
+
+**测试模板**:真实调用一次,不要相信文档 —— demo 才能暴露。
+
+**预防措施**:**任何"看起来应该存在的 API"都要 demo 验证一次**,单元测试用 mock 绕过时尤其危险。
+
+#### 模式 4:中文作为测试输入的 GBK 陷阱(本次 demo 第二次踩)
+
+**症状**:`machine.start("测试正常路径")` 在 GBK 控制台下输出乱码,`problem` 字段被截断到 < 10 字符,pydantic 抛 `String should have at least 10 characters`。
+
+**根因**:PowerShell 默认 stdout 是 GBK,Python 字符串传到 stdout 时被编码,中文一字多字节,被 GBK 解码成乱码后**长度变短**。
+
+**修复模板**:**测试输入统一用 ASCII**(`"test wizard trigger with enough problem text"`),中文 body 只在生产消息中使用。
+
+**预防措施**:**测试数据是契约的一部分**,locale/编码敏感的输入必须 ASCII。
+
+---
+
+### 3.5 元模式:"先做后验" vs "先想后做"
+
+| 模式 | 比例(本项目历史) | 适用场景 |
+|------|----------------|---------|
+| 单元测试能捕获的 bug | ~30% | 纯逻辑(LIFO、空值、边界值) |
+| 集成 demo 能捕获的 bug | ~70% | 跨进程(编码、CLI、文件系统、locale) |
+
+**经验法则**:**修完一个功能,先跑一次 demo 再 commit**。demo 是性价比最高的"集成测试",能在 5 分钟内暴露单元测试看不出的 70% bug。
+
 ---
 
 ## 4. 实战案例：DevFlow v0.3 工作区布局
@@ -339,6 +436,107 @@
 ### 4. 决策建议
 ✅ 可发布。根问题全部消除或已规避。
 ```
+
+---
+
+### 4.5 实战案例：P1-17 Intake Wizard(2026-08-20 demo)
+
+> **本案例是"修 bug 也走第一性 SOP"的范例**。和 §4.1 关注"设计阶段"不同,本案例关注"修复阶段"。
+
+#### 阶段 A：方案生成 — 剥表象
+
+**步骤 1 — 表象**:用户报告两个 P2 残留 bug:
+- ⚠️17:`_gate_intake()` 没硬拒绝 `ready-for-human`,缺 wizard 模块
+- ⚠️18:`_generate_handoff()` 的 `suggested_skills` 硬编码 3 个 CLI 命令
+
+**步骤 2 — 真问题**:
+- 17 是**安全门漏了**:`ready-for-human` 议题会污染 Agent 流水线
+- 18 是 **UX 错位**:`suggested_skills` 是 Agent 解析的字段,不是给人类看的 CLI 列表
+- 共同真问题:**架构文档承诺的"双门禁"和"动态 skill"在代码层被简化实现**
+
+**步骤 3 — 根假设**(质疑自己会怎么修):
+- A. 应该一次性把 17 和 18 都修完 → **可能错**(反小步迭代)
+- B. 17 的修复 = 加个 `if` 分支 → **可能错**(闸门语义要重新定义)
+- C. 18 的修复 = 改 `_generate_handoff` 输出格式 → **可能错**(数据来源问题)
+- D. wizard 是新增模块 → **可能错**(wizard 可能只是个交互式 CLI 分支)
+- E. 我应该严格按"双门禁"原文实现 → **可能错**(审计过 5 轮的代码可能有新边界)
+
+**步骤 4 — 替代方案**:
+- 替代 1:大方案(17+18 一起,加 wizard 模块 + 重构 handoff)
+- 替代 2:**分两轮修,每轮最小化** ← 选这个
+- 替代 3:只修 17,18 留给下个迭代
+- 替代 4:17+18 一起但用 feature flag(增加复杂度)
+
+**步骤 5 — 对齐约束**:
+- 17 是 P1 安全门(必修),18 是 P2 UX 增强(应修)
+- 分两轮 = 可独立回滚
+- 选**替代 2**
+
+**步骤 6 — 根风险**:
+- 风险 1:17 修复可能引入新边界(ready-for-human 议题已走到 Stage3 怎么办?)
+- 风险 2:18 修复需要决定 skill 数据来源(硬编码?配置?动态?)
+- 风险 3:两次修复都可能破坏现有 121 个测试
+
+#### 阶段 B：修复前查证(避免预判错误)
+
+**实际查证结果**(修正了 3 个预判):
+- ❌ "需要新增 `wizard.py` 模块" → **不需要**,`cli.py` 里加一个函数就够
+- ❌ "需要新增 `LedgerAction.TRIAGE`" → **已经有**(`model/ledger.py:19`)
+- ❌ "需要硬编码 8 个阶段的 skill 映射表" → **不需要**,`SkillResolver.resolve()` 已有 `PHASE_SKILLS` 字典
+
+**贝叶斯更新**:**先查再改**比"先想再改"少踩 3 个坑。
+
+#### 阶段 C：实施 + 验证
+
+**Round 1(P1-17)**:3 个最小动作
+1. 定义契约(`_gate_intake()` 的输入输出 + 拒绝语义)
+2. 加最小拒绝分支(检测 ready-for-human → 返回 `{wizard: true}`)
+3. 加 CLI 分支(`devflow next` 在 wizard=true 时输出交互式向导)
+
+**Round 2(P2-18)**:3 个最小动作
+1. 数据来源:从 `SkillResolver.resolve(phase)` 获取当前阶段推荐 skill
+2. 结构化输出:handoff 改 `YAML frontmatter + Markdown body`
+3. 动态填充:`_generate_handoff` 调 SkillResolver 而非硬编码
+
+**全量回归**:`147 passed`(原 121 + 新增 7 + 其他历史增量)。
+
+#### 阶段 D：Demo 验证(本案例的核心教训)
+
+**预期**:Round 1+2 修完,bug 闭环。
+**实际**:跑 demo 时暴露 **3 个修复时遗漏的 bug**:
+
+| Bug | 根因 | 修复 |
+|-----|------|-----|
+| **R17-3 LIFO** | `_gate_intake` 遍历所有 triage 记录,wizard 升级后旧 ready-for-human 仍触发硬拒绝 | 改为 LIFO,只看最新一条 |
+| **R17-4 GBK** | `typer.echo("⚠️ ...")` 在 Windows GBK 控制台崩溃 | 替换为 `[WARN]` |
+| **R18-3 typer.Choice** | `typer.Choice` 不存在(typer 没暴露 Choice) | 改用 `click.Choice` |
+
+**关键经验**(已写入 §3.5 元模式):
+- 单元测试捕获率 ~30%,demo 捕获率 ~70%
+- **修完一个功能,先跑一次 demo 再 commit** 是最高 ROI 的验证
+
+#### 阶段 E：固化为回归测试
+
+**新增文件**:`tests/integration/test_wizard_e2e.py`(7 个 e2e 用例)
+
+**关键测试**:
+- `test_e2e_wizard_upgrade_a_allows_next_phase`(锁定 LIFO 行为)
+- `test_e2e_wizard_messages_are_ascii_safe`(锁定 GBK 兼容)
+- `test_e2e_full_flow_init_start_human_wizard_recover`(全链路 demo 还原)
+
+**全量回归**:`155 passed`(e2e 测试通过)。
+
+#### 阶段 F：审计台账 + SOP 反哺
+
+- 审计台账 `docs/audit-ledger.md` 第 7 轮追加(R17-1/2/3/4 + R18-1/2/3)
+- 本 SOP §3.4 新增 4 个 Bug 模式库(LIFO / GBK / 第三方 API / 中文输入)
+- 本 SOP §3.5 新增元模式"先做后验"
+
+#### 4. 决策建议
+
+✅ **可发布**。3 个根问题(双门禁漏 / skill 硬编码 / 修复时遗漏)全部消除或已固化为 e2e 测试。
+
+**贝叶斯复盘**:Round 1+2 写测试时如果**额外加一个"模拟 wizard 升级"的 e2e 用例**,就能直接捕获 R17-3,不需要 demo 暴露。这是下一轮改进方向。
 
 ---
 

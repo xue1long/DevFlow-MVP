@@ -37,6 +37,13 @@ def python_type_to_json_schema(annotation: Any) -> str:
     """
     origin = get_origin(annotation)
     if origin is not None:
+        # list[T] / List[T] → "array"
+        if origin is list:
+            return "array"
+        # dict[K, V] / Dict[K, V] → "object"
+        if origin is dict:
+            return "object"
+        # Union / Optional[T] / None 默认：取第一个非 None 参数
         args = get_args(annotation)
         non_none = [a for a in args if a is not type(None)]
         if non_none:

@@ -359,7 +359,7 @@ def test_verify_ledger_detects_tampered_prev_hash(env):
 
 
 def test_verify_ledger_tampered_chain_head(env):
-    """篡改 chain_head 指向后 verify_ledger 链本身仍完整"""
+    """篡改 chain_head 指向后 verify_ledger 必须检测到"""
     storage, _ = env
     storage.append_ledger(LedgerEntry(phase=0, action=LedgerAction.TRIAGE, details="e1"))
     storage.append_ledger(LedgerEntry(phase=0, action=LedgerAction.TRIAGE, details="e2"))
@@ -370,10 +370,11 @@ def test_verify_ledger_tampered_chain_head(env):
     with open(storage.ledger_path, "w", encoding="utf-8") as f:
         yaml.dump(ledger, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
-    # 链内每个条目的 prev_hash 引用正确时链本身仍然完整
-    # 但 chain_head 不指向最后一个条目——这是一个设计问题
+    # 链内每个条目的 prev_hash 引用仍然正确，但 chain_head 被篡改
+    # 指向了一个早期条目，verify_ledger 必须检测到这个篡改。
     result = storage.verify_ledger()
-    assert result["ok"]
+    assert not result["ok"]
+    assert "哈希链验证失败" in result["message"]
 
 
 # --- 哈希字段白名单断言（v0.3.4 优化建议一） ---

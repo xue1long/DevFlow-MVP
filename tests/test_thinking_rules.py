@@ -22,8 +22,8 @@ from devflow.model.spec import Spec
 from devflow.model.task import Task, TaskPriority
 from devflow.model.plan import Plan
 from devflow.model.review import ReviewVerdict, ViolationSeverity
-from devflow.storage.fs_backend import FSBackend
-from devflow.policy.loader import load_sop
+from devflow.storage.memory_backend import MemoryStorageBackend
+from devflow.policy.loader import load_sop_from_text
 from devflow.engine.state_machine import PhaseStateMachine
 from devflow.engine.review_engine import ReviewEngine
 from devflow.storage.review_store import ReviewStore
@@ -70,9 +70,12 @@ SOP_THINKING_DISABLED = """sop:
 
 @pytest.fixture
 def env(tmp_path):
-    storage = FSBackend(tmp_path)
+    """Phase C: 内存后端 fixture。仅走 StorageBackend 抽象接口。
+    ReviewStore(tmp_path) 仍基于文件系统构造（其 write/read 仅在真 fixture 才需要）。
+    """
+    storage = MemoryStorageBackend(tmp_path)
     storage.init_workspace(SOP_WITH_THINKING)
-    config = load_sop(tmp_path / "sop.yaml")
+    config = load_sop_from_text(SOP_WITH_THINKING)
     machine = PhaseStateMachine(storage, config)
     return machine, storage, config, tmp_path
 
@@ -265,9 +268,9 @@ def test_thinking_redundancy_zero_buffer(env):
 
 def test_thinking_disabled_in_sop(tmp_path):
     """v0.3.3: thinking.enabled=false 时跳过所有思维检查"""
-    storage = FSBackend(tmp_path)
+    storage = MemoryStorageBackend(tmp_path)
     storage.init_workspace(SOP_THINKING_DISABLED)
-    config = load_sop(tmp_path / "sop.yaml")
+    config = load_sop_from_text(SOP_THINKING_DISABLED)
     assert config.thinking.enabled is False
 
     storage.write_spec("test-spec", {

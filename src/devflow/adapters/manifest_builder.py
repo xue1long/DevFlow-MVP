@@ -48,7 +48,16 @@ def build_manifests_from_cli(app: typer.Typer) -> list[SkillManifest]:
 
         args: list[SkillArg] = []
         for p in sig.parameters.values():
-            arg_type = python_type_to_json_schema(hints.get(p.name, str))
+            hint = hints.get(p.name, str)
+            arg_type = python_type_to_json_schema(hint)
+            # v0.3.4 #39: 类型降级时 warning（未注册类型 → string）
+            if arg_type == "string" and hint is not str:
+                import warnings
+                warnings.warn(
+                    f"参数 {cmd_info.name or cmd_info.callback.__name__}."
+                    f"{p.name} 的类型 {getattr(hint, '__name__', repr(hint))} "
+                    f"未注册，降级为 string"
+                )
             args.append(SkillArg(
                 name=p.name,
                 type=arg_type,

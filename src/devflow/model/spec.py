@@ -47,6 +47,28 @@ class Spec(BaseModel):
         description="损益思维: 决策时放弃了什么(机会成本记录)",
     )
 
+    # Intake 持久化（v0.3.4: 原先 Intake 只存在于内存/ledger details，结构化字段全部丢失）
+    intake: Optional[dict] = Field(
+        default=None,
+        description="Intake 结构化数据: {kind, summary, triage_state, blocked_reason}",
+    )
+
+    @field_validator("title")
+    @classmethod
+    def title_not_blank(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("title 不能为空")
+        return stripped
+
+    @field_validator("problem")
+    @classmethod
+    def problem_not_blank(cls, v: str) -> str:
+        stripped = v.strip()
+        if len(stripped) < 10:
+            raise ValueError("problem 长度应 ≥10 字符")
+        return stripped
+
     @field_validator("goals")
     @classmethod
     def goals_items_non_empty(cls, v: list[str]) -> list[str]:

@@ -4,7 +4,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .contract import Contract
 
@@ -35,7 +35,11 @@ class Task(BaseModel):
       priority   二八法则:  P0/P1/P2
       owner_skill 能力圈: 擅长/短板标注(learn/collab 表示圈外需协作)
     """
-    id: str = Field(..., description="Task ID，格式 task-<n>")
+    id: str = Field(
+        ...,
+        pattern=r"^([a-zA-Z0-9_-]+|task-\d+)$",
+        description="Task ID，建议格式 task-<n>（短字母数字也可，用于 DAG 测试）",
+    )
     title: str = Field(..., min_length=1)
     module: str = Field(..., min_length=1, description="单任务只改一个模块")
     blocked_by: list[str] = Field(default_factory=list, description="前置任务 ID（MVP 不做环检测）")
@@ -45,6 +49,14 @@ class Task(BaseModel):
     status: TaskStatus = Field(default=TaskStatus.TODO)
     commits: list[str] = Field(default_factory=list, description="关联 commit SHA")
     wide_refactor: bool = Field(default=False)
+
+    @field_validator("acceptance")
+    @classmethod
+    def acceptance_items_non_empty(cls, v: list[str]) -> list[str]:
+        for item in v:
+            if not item.strip():
+                raise ValueError("acceptance 中每项不能为空")
+        return v
 
     # v0.3.3 思维字段（全部可选,宽松默认）
     priority: TaskPriority = Field(
