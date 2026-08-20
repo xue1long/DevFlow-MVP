@@ -7,6 +7,38 @@
 ## [Unreleased]
 
 ### Added
+- **v0.4.0 引文式调研子能力 research（2026-08-21）**：
+  - 新建 `src/devflow/model/research.py`：`SourceType` / `TrustLevel` / `Citation` / `ResearchQuery` / `ResearchReport` 5 个 Pydantic 模型 + `to_markdown()` 带引用格式
+  - 新建 `src/devflow/adapters/research/` 包（4 backend + 选择器，零业务逻辑纪律）：
+    - `AgentReachBackend` 复用宿主平台已加载的 `agent-reach` skill（主路径，15+ 平台多 backend 路由，避免重复造轮子）
+    - `GitHubSearchBackend` GitHub Repository Search API 兜底（鉴权 `GITHUB_TOKEN` 可选）
+    - `RegistryQueryBackend` PyPI + npm + crates.io 三源聚合查询
+    - `WebSearchBackend` DuckDuckGo Instant Answer 通用兜底
+    - `select_backends()` 优先级排序 + sources 过滤 + health_check 降级
+  - 新建 `src/devflow/engine/research_runner.py` `ResearchRunner` 编排层：并发（`concurrent.futures.wait` 强制超时）+ URL 去重 + `max_total_chars` 截断 + 落盘 Markdown + 增量更新 `spec.research_refs` + 写账本（`action=research`）
+  - SOP 配置扩展 `sop.yaml` `research:` 段（默认 `enabled: true` / `auto_run_on: [plan_stage]` / `fallback: skip`）：
+    - 字段：`enabled` / `auto_run_on` / `sources` / `max_results_per_source` / `max_total_chars` / `timeout_per_source` / `fallback` / `citation_required` / `start_keywords`
+    - `is_research_auto_run(stage)` 辅助判定
+    - 向后兼容：旧 sop.yaml 无 research 段 → 走默认值
+  - CLI 新增 `devflow research <query> [--spec-id] [--sources] [--max-results]`：显式调研命令
+  - CLI 扩展 `devflow plan --with-research`：显式触发；或 SOP `auto_run_on=[plan_stage]` 隐式
+  - `state_machine.py::start()` advisory 提示：检测 `sop.research.start_keywords` 触发词后 stderr echo（**不自动执行**，避免消耗 API 额度）
+  - 模型扩展：`model/ledger.py` `LedgerAction.RESEARCH`；`model/spec.py` `research_refs: list[dict]`（**仅路径引用，不嵌入内容**，避免交接时漂移）
+  - 文档：`README.md` 核心概念 `### Research` 段；`docs/devflow-architecture-v0.1.md` §5.3 状态升级（规划 → 已落地）、§6.1 工具清单加 `devflow.research(...)`、§15.3 #12 状态升级
+  - 测试：5 个新文件，118 个单测全过（+ 1 skip 平台相关）
+    - `test_research_model.py` 23 个
+    - `test_research_config.py` 16 个
+    - `test_research_backends.py` 43 个（4 backend + 选择器 mock HTTP 全覆盖）
+    - `test_research_runner.py` 19 个（并发 / 去重 / 截断 / 失败兜底）
+    - `test_research_cli_integration.py` 18 个（Typer CliRunner + advisory + plan --with-research）
+  - **纪律落地**：
+    - 不重复造 `agent-reach` 轮子（主路径复用宿主平台 skill，DevFlow 内置仅做兜底）
+    - 适配层零业务逻辑（RFC §7），仅外部 API → Citation 转换
+    - 离线不阻断流程（`fallback=skip` 默认，CI 兼容）
+    - append-only 账本 + `action=research`，与现有审计追溯字段一致
+  - 详见 [`PR_DESCRIPTION_V0.4_RESEARCH.md`](../PR_DESCRIPTION_V0.4_RESEARCH.md)
+
+### Changed
 - **v0.4.0 路径策略配置化（2026-08-20）**：
   - 新建 `src/devflow/storage/layout.py`：`LayoutPaths` + `resolve_layout()`，路径从 `sop.yaml` `storage:` 节读取而非硬编码
   - `FSBackend` / `ReviewStore` / `MemoryReviewBackend` 统一接入 layout
