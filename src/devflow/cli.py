@@ -748,14 +748,16 @@ def dispatch(
 
 @app.command(name="adapter-export")
 def adapter_export(
-    platform: str = typer.Argument(..., help="目标平台: claude-code / workbuddy / codebuddy"),
+    platform: str = typer.Argument(None, help="目标平台: claude-code / workbuddy / codebuddy（--auto-detect 时可省略）"),
     target: Path = typer.Option(Path("./skills"), "--target", help="生成目录"),
+    auto_detect: bool = typer.Option(False, "--auto-detect", help="自动 detect 当前平台（覆盖 platform 参数）"),
 ) -> None:
     """导出 Skill manifest 到目标平台
 
-    v0.3 B4.4 阶段：架构文档 §6 双集成面
+    v0.3 B4.4 / C7.3 阶段：架构文档 §6 双集成面
 
     Manifest 自动从 cli.py 派生（v0.3 INDEX 教训：禁止手写）。
+    默认手动指定平台；--auto-detect 时按 detect_platform() 自动选择。
 
     Examples:
         # Claude Code Skills
@@ -766,20 +768,34 @@ def adapter_export(
 
         # CodeBuddy Skills
         devflow adapter-export codebuddy --target ./codebuddy-skills
+
+        # 自动检测（需先设环境变量 CLAUDE_CODE 等）
+        devflow adapter-export --auto-detect --target ./skills
     """
     from .adapters.skill_packager import package_for_platform
     from .adapters.manifest_builder import build_manifests_from_cli
+    from .adapters.detect import detect_platform
 
     try:
+        if auto_detect:
+            platform = detect_platform().value
+        elif platform is None:
+            _output({
+                "ok": False,
+                "message": "必须指定 platform 参数或使用 --auto-detect",
+            })
+            raise typer.Exit(code=1)
+
         manifests = build_manifests_from_cli(app)
         generated = package_for_platform(platform, manifests, target)
         _output({
             "ok": True,
             "platform": platform,
+            "auto_detect": auto_detect,
             "target": str(target),
             "manifest_count": len(manifests),
             "generated_count": len(generated),
-            "generated_files": [str(p) for p in generated[:5]],  # 前 5 个示例
+            "generated_files": [str(p) for p in generated[:5]],
         })
     except ValueError as e:
         _output({"ok": False, "message": str(e)})

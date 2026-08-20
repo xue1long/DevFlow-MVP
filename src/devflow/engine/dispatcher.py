@@ -21,6 +21,8 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 from ..model.ledger import LedgerAction, LedgerEntry
+from ..adapters.detect import Platform
+from .worktree import create_worktree_for_plan
 
 
 class DispatchConfig(BaseModel):
@@ -250,11 +252,30 @@ class Dispatcher:
         task,
         plan,
     ) -> DispatchResult:
-        """派发单个 Task，带 5 轮断路器"""
+        """派发单个 Task，带 5 轮断路器
+
+        B7.2 阶段增强：worktree_per_task 配置启用时，为每个 Task 创建隔离
+        git worktree，子代理在独立分支工作。worktree 路径写入账本可追溯。
+        """
         from ..model.task import Task
 
         plan_id = self.storage.get_current_plan_id()
         spec_id = plan.spec_id
+
+        # B7.2: worktree 隔离（仅在配置启用时）
+        worktree_path = None
+        if self.config.worktree_per_task and self.storage.root:
+            try:
+                worktree_path = create_worktree_for_plan(
+                    plan_id, self.storage.root
+                )
+            except Exception as e:
+                # worktree 创建失败不应阻断整个 dispatch
+                # 仅记录 error，继续在主仓库工作
+                return DispatchResult(
+                    task_id=task.id,
+                    error=f"worktree creation failed: {e}",
+                )
 
         for round_num in range(1, self.config.max_rounds + 1):
             # 检查断路器（halt + max_rounds）
@@ -271,6 +292,7 @@ class Dispatcher:
                     f"参考: specs/{spec_id}.yaml, plans/{plan_id}.yaml\n"
                     f"验收: {task.acceptance}"
                 ),
+                worktree=worktree_path,
             )
             try:
                 impl_result = await self.agent_runner.run_subagent(subagent_task)
@@ -320,6 +342,7 @@ def create_dispatcher(
     agent_command: Optional[str] = None,
     use_real_agent: bool = False,
     sop_config=None,
+    auto_detect_platform: bool = True,
 ):
     """Dispatcher 工厂函数（CLI 入口处调用）
 
@@ -328,6 +351,8 @@ def create_dispatcher(
         agent_command: 真实 Agent 命令（如 "claude"）；None 则用 MockAgentRunner
         use_real_agent: True 时用 ClaudeCodeAgentRunner 替换 Mock
         sop_config: SOP 配置（B6 阶段从 sop.yaml 读取 model_tiers）；None 则用默认
+        auto_detect_platform: True 时按 detect_platform() 自动选择 Agent Runner
+            （C7.3 阶段，默认 True 以满足 v0.3 规范）
 
     Returns:
         完全装配的 Dispatcher 实例（含 GateRunner / ReviewEngine / AgentRunner）
@@ -335,14 +360,15 @@ def create_dispatcher(
     Examples:
         # 测试用：Mock Agent + 默认 config
         >>> dispatcher = create_dispatcher(Path("."))
-        # 生产用：ClaudeCodeAgentRunner + sop.yaml 配置
-        >>> dispatcher = create_dispatcher(Path("."), use_real_agent=True, sop_config=sop)
+        # 生产用：自动检测平台
+        >>> dispatcher = create_dispatcher(Path("."), auto_detect_platform=True)
     """
     from ..storage.fs_backend import FSBackend
     from ..storage.review_store import ReviewStore
     from ..policy.loader import SOPConfig, load_sop
     from ..verify.gate_runner import GateRunner
     from ..engine.review_engine import ReviewEngine
+    from ..adapters.detect import Platform, detect_platform
     from .agent_runner import (
         ClaudeCodeAgentRunner,
         GenericAgentRunner,
@@ -364,13 +390,31 @@ def create_dispatcher(
     review_engine = ReviewEngine(storage, sop_config, review_store)
     gate_runner = GateRunner(storage, sop_config)
 
+    # C7.3 阶段：自动检测平台选择 Agent Runner
     if use_real_agent:
-        if agent_command == "claude" or agent_command is None:
-            agent_runner = ClaudeCodeAgentRunner(worktree_root=root)
-        else:
+        # use_real_agent=True → 强制真实 Agent
+        # 有 agent_command → GenericAgentRunner
+        # 无 agent_command → ClaudeCodeAgentRunner（默认 claude）
+        if agent_command and agent_command != "claude":
             agent_runner = GenericAgentRunner(
-                command=agent_command, worktree_root=root,
+                command=agent_command,
+                worktree_root=root,
             )
+        else:
+            agent_runner = ClaudeCodeAgentRunner(worktree_root=root)
+    elif auto_detect_platform:
+        # auto_detect 但无 use_real_agent → 只检测到真实平台才用真实 Agent
+        platform = detect_platform()
+        if platform == Platform.CLAUDE_CODE:
+            agent_runner = ClaudeCodeAgentRunner(worktree_root=root)
+        elif platform in (Platform.WORKBUDDY, Platform.CODEBUDDY):
+            agent_runner = GenericAgentRunner(
+                command=agent_command or platform.value,
+                worktree_root=root,
+            )
+        else:
+            # CLI / MCP Host → Mock
+            agent_runner = MockAgentRunner()
     else:
         agent_runner = MockAgentRunner()
 
@@ -385,6 +429,39 @@ def create_dispatcher(
         gate_runner=gate_runner,
         config=config,
     )
+
+
+def _select_agent_runner_for_platform(
+    platform: Platform,
+    agent_command: Optional[str],
+    worktree_root: Path,
+):
+    """根据平台选择 Agent Runner
+
+    C7.3 阶段简化实现：
+    - ClaudeCode → ClaudeCodeAgentRunner
+    - WorkBuddy / CodeBuddy → GenericAgentRunner（无专用实现）
+    - MCP Host / CLI → MockAgentRunner（暂不启用真实 Agent）
+    """
+    from .agent_runner import (
+        ClaudeCodeAgentRunner,
+        GenericAgentRunner,
+        MockAgentRunner,
+    )
+
+    if platform == Platform.CLAUDE_CODE:
+        return ClaudeCodeAgentRunner(worktree_root=worktree_root)
+
+    if platform in (Platform.WORKBUDDY, Platform.CODEBUDDY):
+        # 工作流引擎不实现特定 Agent runner（v3 纪律：devflow 编排 Agent，不实现 Agent）
+        # 委托给 GenericAgentRunner，由平台 SDK 处理
+        return GenericAgentRunner(
+            command=agent_command or platform.value,
+            worktree_root=worktree_root,
+        )
+
+    # MCP Host / CLI → Mock（测试场景或未启用真实 Agent）
+    return MockAgentRunner()
 
 
 def _dispatch_config_from_sop(sop_config) -> DispatchConfig:
