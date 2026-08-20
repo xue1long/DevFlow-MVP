@@ -603,18 +603,7 @@ class PhaseStateMachine:
                     "gate": gate_name,
                     "pass": gate_result["ok"],
                     "message": gate_result.get("message", ""),
-                })
-
-        # review_gate 门禁
-        if self.review_engine and phase >= 2:
-            review_gate = self.config.gates.get("review_gate")
-            if review_gate and review_gate.enabled and review_gate.bind_to_stage == phase:
-                rv = self.review_engine.check_review_gate()
-                results.append({
-                    "gate": "review_gate",
-                    "pass": rv["ok"],
-                    "message": rv.get("message", ""),
-                    "violations": rv.get("violations", []),
+                    "violations": gate_result.get("violations", []),
                 })
 
         all_pass = all(r["pass"] for r in results)
@@ -749,9 +738,10 @@ class PhaseStateMachine:
         return {"ok": False, "message": "工作区无代码变更且存在未完成的 Task"}
 
     def _gate_verify(self) -> dict:
-        if self.gate_runner is None:
-            return {"ok": False, "message": "GateRunner 未注入，无法执行 tests_pass"}
-        return self.gate_runner.run_tests_pass()
+        # Stage5 出口门禁 = tests_pass（v0.3.4 修复重复执行 bug）
+        # 实际执行在外部门禁循环中（GateRunner.get_enabled_gates_for_stage(5)）
+        # 这里仅返回占位，避免 tests_pass 被执行两次
+        return {"ok": True, "message": "Stage5 出口门禁由 GateRunner 统一处理"}
 
     def _gate_review(self) -> dict:
         if self.gate_runner is None:

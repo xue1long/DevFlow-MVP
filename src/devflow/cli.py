@@ -45,8 +45,8 @@ def _get_machine() -> tuple[PhaseStateMachine, FSBackend, 'SOPConfig']:
     storage = FSBackend(_get_root())
     config = _get_config()
     git = SystemGitPort(_get_root())
-    gate_runner = GateRunner(config, str(_get_root()))
     review_engine = _get_review_engine(storage, config)
+    gate_runner = GateRunner(config, str(_get_root()), review_engine=review_engine)
     machine = PhaseStateMachine(storage, config, git=git, gate_runner=gate_runner, review_engine=review_engine)
     return machine, storage, config
 

@@ -42,7 +42,10 @@ def env(tmp_path):
     config = load_sop(tmp_path / "sop.yaml")
     review_store = ReviewStore(tmp_path)
     engine = ReviewEngine(storage, config, review_store)
-    machine = PhaseStateMachine(storage, config, review_engine=engine)
+    # v0.3.4: GateRunner 现在统一处理 review_gate，需注入 review_engine
+    from devflow.verify.gate_runner import GateRunner
+    gate_runner = GateRunner(config, str(tmp_path), review_engine=engine)
+    machine = PhaseStateMachine(storage, config, gate_runner=gate_runner, review_engine=engine)
     return engine, storage, config, review_store, machine, tmp_path
 
 

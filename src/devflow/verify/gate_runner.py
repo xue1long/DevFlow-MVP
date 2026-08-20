@@ -31,9 +31,10 @@ class GateRunner:
     不负责状态转换——那是 PhaseStateMachine 的事。
     """
 
-    def __init__(self, config: SOPConfig, cwd: str):
+    def __init__(self, config: SOPConfig, cwd: str, review_engine: Optional['ReviewEngine'] = None):
         self.config = config
         self.cwd = cwd
+        self.review_engine = review_engine
 
     def run_tests_pass(self) -> dict:
         """执行 tests_pass 门禁"""
@@ -71,6 +72,11 @@ class GateRunner:
             return {"ok": False, "message": f"门禁 '{gate_name}' 未配置"}
         if not gate.enabled:
             return {"ok": True, "message": f"门禁 '{gate_name}' 未启用，跳过"}
+        # review_gate 委托给 review_engine（v0.3.4:消除 PhaseStateMachine 中的硬编码）
+        if gate_name == "review_gate":
+            if self.review_engine is None:
+                return {"ok": False, "message": "review_engine 未注入，无法执行 review_gate"}
+            return self.review_engine.check_review_gate()
         if gate.kind == "triage":
             return {"ok": False, "message": "triage 门禁需要专门处理"}
         if gate.command is None:
@@ -88,8 +94,22 @@ class GateRunner:
         }
 
     def get_enabled_gates_for_stage(self, stage: int) -> list[tuple[str, GateConfig]]:
-        """返回绑定到指定阶段的所有 enabled 门禁"""
-        return self.config.get_enabled_gates_for_stage(stage)
+        """返回绑定到指定阶段的所有 enabled 门禁
+
+        ⚠️ v0.3.4 行为变化：聚合 review_gate 到统一出口
+        之前仅返回 SOPConfig.get_enabled_gates_for_stage() 结果，
+        现在额外检查 review_gate.bind_to_stage 并追加。
+        当前唯一调用方是 state_machine.py:600。
+        """
+        gates = self.config.get_enabled_gates_for_stage(stage)
+        # review_gate 也走统一出口（不再由 PhaseStateMachine 硬编码）
+        # 注意：SOPConfig.get_enabled_gates_for_stage 已包含 review_gate（如果 enabled）
+        # 需避免重复——仅当 SOPConfig 没返回 review_gate 时才追加
+        if not any(name == "review_gate" for name, _ in gates):
+            review_gate = self.config.gates.get("review_gate")
+            if review_gate and review_gate.enabled and review_gate.bind_to_stage == stage:
+                gates.append(("review_gate", review_gate))
+        return gates
 
     def _execute_gate_command(self, gate: GateConfig) -> dict:
         """执行单个门禁命令"""

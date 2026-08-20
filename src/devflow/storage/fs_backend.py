@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import tempfile
 import time
@@ -20,6 +21,21 @@ import yaml
 
 from ..model.ledger import LedgerEntry, LedgerAction
 from .base import StorageBackend
+
+logger = logging.getLogger(__name__)
+
+# 参与哈希计算的字段白名单。
+# 重要契约：
+# 1. LedgerEntry 加字段时必须同步更新此集合，否则 _compute_entry_hash 会发 warning；
+#    已签发账本不会自动适配，新字段只影响新条目。
+# 2. 修改此集合后，必须同步更新 tests/test_simple_archive.py 中 test_verify_ledger_*
+#    验证哈希计算行为一致。
+# 3. 字段集必须与 src/devflow/model/ledger.py 的 LedgerEntry 模型字段完全对齐
+#    （除了 append_ledger 动态添加的 _hash/_prev_hash）。
+_HASH_FIELDS: frozenset = frozenset({
+    "phase", "action", "timestamp", "details",
+    "task_id", "commit", "acceptance", "reason", "gate_result",
+})
 
 
 class FSBackend(StorageBackend):
@@ -107,12 +123,21 @@ class FSBackend(StorageBackend):
     def _compute_entry_hash(entry: dict, prev_hash: Optional[str]) -> str:
         """计算账本条目的哈希值（包含前一条的哈希）
 
-        计算与验证必须一致：排除 _hash/_prev_hash 自身字段，
-        否则验证时条目已带上这两个字段会导致哈希永远不匹配。
+        计算与验证必须一致：仅哈希白名单字段，避免 _hash/_prev_hash 自身干扰，
+        且防止 LedgerEntry 加字段时静默破坏哈希链。
         """
         h = hashlib.sha256()
-        # 排除链式字段本身，保证写时与验时序列化内容一致
-        content = {k: v for k, v in entry.items() if k not in ("_hash", "_prev_hash")}
+        # 白名单字段参与哈希
+        content = {k: entry[k] for k in _HASH_FIELDS if k in entry}
+        # 检测未注册字段（防止静默 schema 漂移）
+        extra = set(entry) - _HASH_FIELDS - {"_hash", "_prev_hash"}
+        if extra:
+            logger.warning(
+                "哈希计算中发现未注册字段: %s。"
+                "若该字段是新增的 LedgerEntry 字段，请将其加入 _HASH_FIELDS 白名单，"
+                "否则已有账本的哈希链验证将失败。",
+                sorted(extra),
+            )
         entry_json = json.dumps(content, sort_keys=True, ensure_ascii=False)
         h.update(entry_json.encode("utf-8"))
         if prev_hash:
