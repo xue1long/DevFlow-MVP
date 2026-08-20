@@ -1,4 +1,4 @@
-"""ResearchRunner — 调研编排 (v0.4 RFC §5)
+"""ResearchRunner — 调研编排 (v0.4 RFC §5 + v0.4.1 bug fix)
 
 职责:
   1. 按 SOP 配置选择 backend 链(select_backends)
@@ -9,11 +9,18 @@
   6. 更新 Spec.research_refs(追加,不覆盖)
   7. 写账本(action=research)
 
+v0.4.1 fix(post-v0.4-research-diagnosis.md):
+  - sources_used/failed 改为 backend 名字维度(原 source_type 维度在多 backend
+    共享 source_type 时会出现 used 与 failed 同时出现的矛盾)
+  - 新增 backends_empty 区分"异常失败"与"空结果"
+  - run() 返回 JSON 增 sources_in_results(从 citations 提取的真实来源)
+
 失败策略:
-  - 单 backend 失败 → 静默跳过,记入 sources_failed
-  - 全部 backend 失败 → fallback=skip 时返回空报告(不阻断流程)
-                     → fallback=error 时抛 RuntimeError
-  - Spec 不存在     → 跳过更新 Spec,仅落盘报告 + 账本
+  - 单 backend 异常 / 超时 -> backends_failed
+  - 单 backend 健康但 0 命中 -> backends_empty(不算失败)
+  - 全部 backend 失败 / 空 -> fallback=skip 时返回空报告(不阻断流程)
+                            -> fallback=error 时返回 ok=False
+  - Spec 不存在 -> 跳过更新 Spec,仅落盘报告 + 账本
 """
 from __future__ import annotations
 
@@ -69,11 +76,15 @@ class ResearchRunner:
               - ok: True/False
               - report_path: 报告 Markdown 路径
               - citations_count: 引用条数
-              - sources_used: 实际成功的数据源
-              - sources_failed: 失败的数据源
+              - backends_used: 实际产出引用的 backend 名字列表
+              - backends_failed: 异常 / 超时的 backend 名字列表
+              - backends_empty: 健康但 0 命中的 backend 名字列表
+              - sources_in_results: citations 中实际出现的 source_type 去重列表
               - fallback_used: 是否触发多 backend 串联
               - message: 人类可读摘要
               - citations: 引用列表(供 CLI 输出)
+              - sources_used: deprecated,保留向后兼容(== backends_used 转 source_type)
+              - sources_failed: deprecated,保留向后兼容(== backends_failed)
         """
         # 1. 构造 ResearchQuery
         resolved_sources = (
@@ -111,11 +122,12 @@ class ResearchRunner:
                 reason="无可用 backend(可能 sources 配置无对应实现)",
             )
 
-        # 3. 并发执行
+        # 3. 并发执行(v0.4.1:返回 backend 名字维度)
         (
             all_citations,
-            sources_used,
-            sources_failed,
+            backends_used,
+            backends_failed,
+            backends_empty,
             backend_chain,
         ) = self._execute_backends(backends, rq)
 
@@ -130,52 +142,74 @@ class ResearchRunner:
         # 6. fallback 判定:实际执行的 backend 数 > 1 即触发 fallback
         fallback_used = len(backend_chain) > 1
 
-        # 7. 全部失败且 SOP 配 error → 抛错
-        if not sources_used and self.config.fallback == "error":
+        # 7. 提取 citations 中实际出现的 source_type(v0.4.1 新增)
+        sources_in_results = sorted({
+            c.source_type.value for c in trimmed
+        })
+
+        # 8. 全部失败且 SOP 配 error -> 返回 ok=False
+        # v0.4.1: 判定标准改为"全部 backend 都失败或空"
+        if not backends_used and self.config.fallback == "error":
             return self._report_failure(
                 spec_id=spec_id,
                 query=query,
                 reason=(
-                    f"全部 backend 失败,sources_failed="
-                    f"{[s.value for s in sources_failed]}"
+                    f"全部 backend 未产出引用,"
+                    f"failed={backends_failed}, empty={backends_empty}"
                 ),
             )
 
-        # 8. 构造报告
+        # 9. 构造报告(v0.4.1: 新增 backends_empty / sources_in_results)
+        # backward compat: sources_used / sources_failed 保留(填 source_type 值)
+        # 给前端兼容,新代码读 backends_*
         report = ResearchReport(
             spec_id=spec_id,
             query=query,
             citations=trimmed,
-            sources_used=sources_used,
-            sources_failed=sources_failed,
+            sources_used=[],  # deprecated,改用 backends_used
+            sources_failed=[],  # deprecated,改用 backends_failed
             fallback_used=fallback_used,
             total_chars=total_chars,
             backend_chain=backend_chain,
             generated_at=datetime.now(),
         )
 
-        # 9. 落盘报告
+        # 10. 落盘报告
         report_path = self._write_report(report)
 
-        # 10. 更新 Spec.research_refs
-        self._update_spec(spec_id, report, report_path)
+        # 11. 更新 Spec.research_refs(v0.4.1:用 backend 名字 + sources_in_results)
+        self._update_spec(
+            spec_id, report, report_path,
+            backends_used=backends_used,
+            backends_failed=backends_failed,
+            backends_empty=backends_empty,
+            sources_in_results=sources_in_results,
+        )
 
-        # 11. 写账本
-        self._append_ledger(spec_id, report)
+        # 12. 写账本(v0.4.1: 用 backend 名字)
+        self._append_ledger(
+            spec_id, report,
+            backends_used=backends_used,
+            backends_failed=backends_failed,
+            backends_empty=backends_empty,
+        )
 
         return {
             "ok": True,
             "report_path": self._relpath(report_path),
             "citations_count": len(trimmed),
-            "sources_used": [s.value for s in sources_used],
-            "sources_failed": [s.value for s in sources_failed],
+            # v0.4.1 新字段(权威)
+            "backends_used": backends_used,
+            "backends_failed": backends_failed,
+            "backends_empty": backends_empty,
+            "sources_in_results": sources_in_results,
             "fallback_used": fallback_used,
             "message": (
                 f"调研完成,{len(trimmed)} 条引用"
                 + (" (fallback 已触发)" if fallback_used else "")
                 + (
-                    " (全部 backend 失败,fallback=skip)"
-                    if not sources_used else ""
+                    " (全部 backend 未产出引用,fallback=skip)"
+                    if not backends_used else ""
                 )
             ),
             "citations": [
@@ -187,6 +221,20 @@ class ResearchRunner:
                 }
                 for c in trimmed
             ],
+            # v0.4.1 deprecated 字段(向后兼容)
+            # 旧字段反映 source_type 维度,会有 used/failed 重复的问题
+            # 新代码应读 backends_used / backends_failed
+            "sources_used": sorted({
+                # 从 backend 名字反推(只标 hit 的)
+                b.source_type.value
+                for b in backends
+                if b.name in backends_used
+            }),
+            "sources_failed": sorted({
+                b.source_type.value
+                for b in backends
+                if b.name in backends_failed
+            }),
         }
 
     # ---- 内部方法 ----
@@ -195,15 +243,25 @@ class ResearchRunner:
         self,
         backends: list[ResearchBackend],
         query: ResearchQuery,
-    ) -> tuple[list[Citation], list[SourceType], list[SourceType], list[str]]:
-        """并发跑全部 backend,收集结果
+    ) -> tuple[
+        list[Citation], list[str], list[str], list[str], list[str]
+    ]:
+        """并发跑全部 backend,收集结果(v0.4.1: 5 元组 backend 名字维度)
+
+        Returns:
+            (citations, used_backends, failed_backends, empty_backends, chain)
+            - used_backends: 实际产出引用的 backend 名字
+            - failed_backends: 异常 / 超时的 backend 名字
+            - empty_backends: 健康但 0 命中的 backend 名字(不算失败)
+            - chain: 全部 backend 名字(按完成顺序)
 
         总超时 = (timeout_per_source + 2) * len(backends),确保最坏情况下
         整体完成时间有上界(避免被慢 backend 卡死)
         """
         all_citations: list[Citation] = []
-        sources_used: list[SourceType] = []
-        sources_failed: list[SourceType] = []
+        used_backends: list[str] = []
+        failed_backends: list[str] = []
+        empty_backends: list[str] = []
         backend_chain: list[str] = []
 
         # 总超时上限:每个 backend 单独超时 + 缓冲,再乘以 backend 数
@@ -227,41 +285,55 @@ class ResearchRunner:
                 try:
                     citations = fut.result()
                 except Exception:
-                    sources_failed.append(b.source_type)
+                    # 异常 -> failed
+                    if b.name not in failed_backends:
+                        failed_backends.append(b.name)
                     continue
 
                 if citations:
                     all_citations.extend(citations)
-                    src = b.source_type
-                    if src not in sources_used:
-                        sources_used.append(src)
+                    if b.name not in used_backends:
+                        used_backends.append(b.name)
                 else:
-                    if b.source_type not in sources_failed:
-                        sources_failed.append(b.source_type)
+                    # 空结果 -> empty(不算失败)
+                    if b.name not in empty_backends:
+                        empty_backends.append(b.name)
 
             # 未完成的 future 视为超时失败
             for fut in not_done:
                 b = future_to_backend[fut]
                 backend_chain.append(b.name)
                 fut.cancel()
-                if b.source_type not in sources_failed:
-                    sources_failed.append(b.source_type)
+                if b.name not in failed_backends:
+                    failed_backends.append(b.name)
         finally:
             # 关键:不等待未完成的线程(它们仍在跑但 runner 已返回)
             pool.shutdown(wait=False)
 
-        return all_citations, sources_used, sources_failed, backend_chain
+        return (
+            all_citations,
+            used_backends,
+            failed_backends,
+            empty_backends,
+            backend_chain,
+        )
 
     @staticmethod
     def _safe_search(
         backend: ResearchBackend, query: ResearchQuery
     ) -> list[Citation]:
-        """包裹 backend.search,失败返回空列表"""
-        try:
-            result = backend.search(query)
-            return result if isinstance(result, list) else []
-        except Exception:
-            return []
+        """包裹 backend.search, 区分"返回空"与"异常失败"
+
+        v0.4.1 fix(post-v0.4-research-diagnosis.md):
+          异常应让 runner 看到(except 块捕获),否则失败的 backend
+          被误归为 empty(失去诊断信号)。返回空 list 是 backend 的合法结果。
+        """
+        result = backend.search(query)
+        if not isinstance(result, list):
+            raise RuntimeError(
+                f"backend {backend.name} 返回非 list: {type(result).__name__}"
+            )
+        return result
 
     @staticmethod
     def _dedupe_by_url(
@@ -311,8 +383,15 @@ class ResearchRunner:
         spec_id: str,
         report: ResearchReport,
         report_path: Path,
+        backends_used: Optional[list[str]] = None,
+        backends_failed: Optional[list[str]] = None,
+        backends_empty: Optional[list[str]] = None,
+        sources_in_results: Optional[list[str]] = None,
     ) -> None:
         """更新 Spec.research_refs(追加,不覆盖)
+
+        v0.4.1: 新增 backends_used/failed/empty + sources_in_results 字段
+        (取代旧的 sources 字段)
 
         - 若 Spec 不存在:静默跳过(报告已落盘 + 账本已记录)
         - 若 Spec 已存在:append 一条 ref 条目
@@ -333,14 +412,25 @@ class ResearchRunner:
         else:
             trust = "unknown"
 
-        spec.research_refs.append({
+        ref_entry: dict = {
             "path": self._relpath(report_path),
             "summary": report.summary[:200] if report.summary else "",
-            "sources": [s.value for s in report.sources_used],
             "trust_level": trust,
             "generated_at": report.generated_at.isoformat(),
             "citations_count": len(report.citations),
-        })
+        }
+
+        # v0.4.1: backend 维度的来源追溯
+        if backends_used is not None:
+            ref_entry["backends_used"] = backends_used
+        if backends_failed is not None:
+            ref_entry["backends_failed"] = backends_failed
+        if backends_empty is not None:
+            ref_entry["backends_empty"] = backends_empty
+        if sources_in_results is not None:
+            ref_entry["sources_in_results"] = sources_in_results
+
+        spec.research_refs.append(ref_entry)
         try:
             self.storage.write_spec(
                 spec_id, spec.model_dump(mode="json")
@@ -350,11 +440,24 @@ class ResearchRunner:
             pass
 
     def _append_ledger(
-        self, spec_id: str, report: ResearchReport
+        self,
+        spec_id: str,
+        report: ResearchReport,
+        backends_used: Optional[list[str]] = None,
+        backends_failed: Optional[list[str]] = None,
+        backends_empty: Optional[list[str]] = None,
     ) -> None:
-        """写账本(action=research)"""
+        """写账本(action=research)
+
+        v0.4.1: 用 backend 名字 + 区分 used/failed/empty
+        """
+        used = backends_used if backends_used is not None else []
+        failed = backends_failed if backends_failed is not None else []
+        empty = backends_empty if backends_empty is not None else []
         details = (
-            f"sources=[{','.join(s.value for s in report.sources_used)}] "
+            f"backends_used=[{','.join(used)}] "
+            f"backends_failed=[{','.join(failed)}] "
+            f"backends_empty=[{','.join(empty)}] "
             f"citations={len(report.citations)} "
             f"fallback={'used' if report.fallback_used else 'no'} "
             f"backend={'->'.join(report.backend_chain)}"
@@ -373,16 +476,21 @@ class ResearchRunner:
     def _report_failure(
         self, spec_id: str, query: str, reason: str
     ) -> dict:
-        """失败统一返回格式"""
+        """失败统一返回格式(v0.4.1: 新字段)"""
         return {
             "ok": False,
             "report_path": None,
             "citations_count": 0,
-            "sources_used": [],
-            "sources_failed": [],
+            "backends_used": [],
+            "backends_failed": [],
+            "backends_empty": [],
+            "sources_in_results": [],
             "fallback_used": False,
             "message": f"调研失败:{reason}",
             "citations": [],
+            # deprecated 字段(向后兼容)
+            "sources_used": [],
+            "sources_failed": [],
         }
 
     def _relpath(self, path: Path) -> str:

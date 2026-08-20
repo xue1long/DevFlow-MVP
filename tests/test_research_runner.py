@@ -9,22 +9,18 @@
 - 并发执行: timeout 不会卡死 runner
 - backend 抛异常被 _safe_search 兜底
 """
-import json
 import sys
 from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from devflow.engine.research_runner import ResearchRunner
-from devflow.model.ledger import LedgerAction, LedgerEntry
 from devflow.model.research import (
     Citation,
     ResearchQuery,
-    ResearchReport,
     SourceType,
     TrustLevel,
 )
@@ -209,6 +205,7 @@ class TestRunHappyPath:
         assert "> A library" in content
 
     def test_sources_used_tracked(self, tmp_path):
+        """v0.4.1: 改为 backend 名字维度"""
         c1 = _make_citation(source=SourceType.GITHUB)
         c2 = _make_citation(url="https://x2.com", title="t2", source=SourceType.WEB)
         backends = [
@@ -221,8 +218,11 @@ class TestRunHappyPath:
         ):
             runner, _, _ = _make_runner(tmp_path, backends)
             result = runner.run("test", spec_id="20260819-test")
-        assert set(result["sources_used"]) == {"github", "web"}
+        # v0.4.1: backend 名字
+        assert set(result["backends_used"]) == {"github", "web"}
         assert result["fallback_used"] is True  # 2 backends 串联
+        # sources_in_results 反映真实来源
+        assert set(result["sources_in_results"]) == {"github", "web"}
 
 
 # =============================================================
@@ -322,7 +322,11 @@ class TestDedupeAndTruncate:
 
 class TestFailurePaths:
     def test_all_backends_fail_skip_mode(self, tmp_path):
-        """全部 backend 返回空 + fallback=skip → ok=True 但空报告"""
+        """全部 backend 返回空 + fallback=skip → ok=True 但空报告(v0.4.1)
+        - backends_used: []
+        - backends_empty: [github, web] (健康但 0 命中)
+        - backends_failed: []
+        """
         backends = [
             FakeBackend("github", SourceType.GITHUB, []),
             FakeBackend("web", SourceType.WEB, []),
@@ -339,7 +343,9 @@ class TestFailurePaths:
 
         assert result["ok"] is True  # 不阻断
         assert result["citations_count"] == 0
-        assert set(result["sources_failed"]) == {"github", "web"}
+        assert result["backends_used"] == []
+        assert set(result["backends_empty"]) == {"github", "web"}
+        assert result["backends_failed"] == []
         # 报告仍落盘
         assert Path(tmp_path / result["report_path"]).exists()
         # 账本仍记录
@@ -350,7 +356,7 @@ class TestFailurePaths:
         assert len(entries) == 1
 
     def test_all_backends_fail_error_mode(self, tmp_path):
-        """全部 backend 返回空 + fallback=error → ok=False"""
+        """全部 backend 返回空 + fallback=error → ok=False(v0.4.1)"""
         backends = [
             FakeBackend("github", SourceType.GITHUB, []),
             FakeBackend("web", SourceType.WEB, []),
@@ -365,10 +371,13 @@ class TestFailurePaths:
             )
             result = runner.run("test", spec_id="20260819-test")
         assert result["ok"] is False
-        assert "全部 backend 失败" in result["message"]
+        assert "全部 backend 未产出引用" in result["message"]
 
     def test_backend_exception_caught(self, tmp_path):
-        """单个 backend 抛异常 → _safe_search 兜底,其他 backend 仍跑"""
+        """单个 backend 抛异常 → _safe_search 兜底,其他 backend 仍跑(v0.4.1)
+        - backends_failed: [web] (抛异常)
+        - backends_used: [github] (有命中)
+        """
         c1 = _make_citation(source=SourceType.GITHUB)
         backends = [
             FakeBackend("github", SourceType.GITHUB, [c1]),
@@ -385,6 +394,12 @@ class TestFailurePaths:
             result = runner.run("test", spec_id="20260819-test")
         assert result["ok"] is True
         assert result["citations_count"] == 1
+        # v0.4.1: backend 名字维度
+        assert "web" in result["backends_failed"]
+        assert "github" in result["backends_used"]
+        assert "web" not in result["backends_used"]
+        assert "github" not in result["backends_failed"]
+        # deprecated 字段也保留
         assert "web" in result["sources_failed"]
         assert "github" in result["sources_used"]
 
@@ -398,6 +413,62 @@ class TestFailurePaths:
             result = runner.run("test", spec_id="20260819-test")
         assert result["ok"] is False
         assert "无可用 backend" in result["message"]
+
+    # --- v0.4.1 新增测试 ---
+
+    def test_empty_result_distinct_from_failed(self, tmp_path):
+        """v0.4.1: 空结果不计入 failed, 计入 empty(诊断报告 §Bug 1)"""
+        c1 = _make_citation(source=SourceType.GITHUB)
+        backends = [
+            FakeBackend("github", SourceType.GITHUB, [c1]),     # 命中
+            FakeBackend("pypi", SourceType.PYPI, []),             # 健康但 0 命中
+            FakeBackend("web", SourceType.WEB, [],                # 抛异常 -> failed
+                        raise_exc=RuntimeError("timeout")),
+        ]
+        with patch(
+            "devflow.engine.research_runner.select_backends",
+            return_value=backends,
+        ):
+            runner, _, _ = _make_runner(tmp_path, backends)
+            result = runner.run("test", spec_id="20260819-test")
+
+        assert result["ok"] is True
+        assert result["citations_count"] == 1
+        # 三组维度互斥
+        assert result["backends_used"] == ["github"]
+        assert result["backends_empty"] == ["pypi"]
+        assert result["backends_failed"] == ["web"]
+        # 三组无交集
+        all_b = set(result["backends_used"] + result["backends_empty"] + result["backends_failed"])
+        assert all_b == {"github", "pypi", "web"}
+
+    def test_sources_in_results_extracted_from_citations(self, tmp_path):
+        """v0.4.1: sources_in_results 从 citations 提取,反映真实来源"""
+        # registry backend 返回 npm 来源
+        c1 = _make_citation(
+            url="https://www.npmjs.com/package/a",
+            source=SourceType.NPM,
+        )
+        c2 = _make_citation(
+            url="https://www.npmjs.com/package/b",
+            source=SourceType.NPM,
+        )
+        # RegistryQueryBackend 的 source_type 是 WEB (覆盖多源)
+        backends = [
+            FakeBackend("registry", SourceType.WEB, [c1, c2]),
+        ]
+        with patch(
+            "devflow.engine.research_runner.select_backends",
+            return_value=backends,
+        ):
+            runner, _, _ = _make_runner(tmp_path, backends)
+            result = runner.run("test", spec_id="20260819-test")
+
+        # sources_in_results 反映真实来源 npm (不是 web)
+        assert "npm" in result["sources_in_results"]
+        assert "web" not in result["sources_in_results"]
+        # 但 backends_used 仍是 backend 名字
+        assert "registry" in result["backends_used"]
 
 
 # =============================================================
