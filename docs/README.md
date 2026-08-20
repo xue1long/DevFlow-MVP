@@ -7,6 +7,7 @@
 | 文档 | 类型 | 版本 | 说明 |
 |------|------|------|------|
 | [README.md](../README.md) | 上手指南 | — | 安装、5 分钟上手、CLI 速查、架构图 |
+| [CONTEXT.md](../CONTEXT.md) | 工作区布局规范 | v0.3.4 | 运行时产物布局、只读/写入边界、文件命名 |
 | [DOCS_GUIDELINES.md](./DOCS_GUIDELINES.md) | 规范 | v0.1 | 文档命名 + 归档 + 版本号约定 |
 | [thinking-framework-guide.md](./thinking-framework-guide.md) | 指南 | v1.0 | 模块×思维匹配手册：9 类模块 × 主辅反思维组合 |
 | [thinking-framework-mapping.md](./thinking-framework-mapping.md) | 指南 | v1.0 | 24 思维 × DevFlow 引擎机制映射（落地状态追踪） |
