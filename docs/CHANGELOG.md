@@ -57,6 +57,19 @@
   - `src/devflow/adapters/router.py` `select_invoker()` / `route_invocation()` 统一入口
   - `create_dispatcher(auto_detect_platform=True)` 默认值（按 detect_platform 自动选 Agent Runner）
   - CLI `devflow adapter-export --auto-detect` flag（按环境变量自动选平台）
+
+- **v0.4 RFC 预案 B 重启（V4 阶段 · 多 spec JOIN 全面版）**：
+  - 触发条件：多 spec 工作流成为主流用法（v0.4-roadmap-paused.md §一）
+  - 核心设计：review_store 文件名反推（review/<spec-id>/r<N>.yaml）+ 时间窗推断
+  - **不扩 LedgerEntry schema**（v0.3 INDEX 教训根治）
+  - `src/devflow/engine/review_audit.py` 核心 JOIN 逻辑：
+    - `audit_review_ledger()` 多 spec 全面版（替代 v0.3.1-r2 单 spec 简化版）
+    - `orphans` 检测（ledger 有 review/fix/escalate 但 review_store 无报告）
+    - `missing_in_ledger` 反向校验（review_store 有报告但 ledger 无记录，**v0.4 才实现**）
+    - `fix_orphans` / `fix_missing_in_ledger` fix 记录双向 JOIN（架构文档 §9.1 接收反馈闭环）
+    - `per_spec_summary` 每个 spec 审计摘要
+  - CLI `devflow review-audit` 重写：调用 audit_review_ledger 核心逻辑，**移除 current_spec_id 单点假设**
+  - 修复 v0.3 简化版遗留 BUG（set 成员检查 vs 元组成员检查）
 - **v0.3 适配层纪律（A2 阶段）**：
   - `src/devflow/adapters/__init__.py` 写入 v0.3 纪律（4 禁 3 允）
 - **v0.3 CLI 接口契约注释（A1 阶段）**：
@@ -66,14 +79,15 @@
 - **v0.3 Skill manifest 自动派生（C3 阶段）**：
   - `src/devflow/adapters/manifest.py` SkillManifest / SkillArg 数据模型
   - `src/devflow/adapters/manifest_builder.py` `build_manifests_from_cli()` 自动从 typer app 派生
-- 新增 135 个测试（json_schema × 11 + invoker × 6 + manifest_builder × 8 + mcp_server × 4 + dag × 12 + plan_dag × 11 + dispatcher_models × 12 + circuit_breaker × 8 + agent_runner × 6 + dispatcher × 6 + dispatch_plan × 4 + dispatch_parallel × 6 + dispatch_config_from_sop × 9 + skill_packager × 9 + worktree × 13 + dispatcher_worktree × 5 + detect × 14 + router × 8 + dispatcher_detect × 8）
+- 新增 172 个测试（json_schema × 11 + invoker × 6 + manifest_builder × 8 + mcp_server × 4 + dag × 12 + plan_dag × 11 + dispatcher_models × 12 + circuit_breaker × 8 + agent_runner × 6 + dispatcher × 6 + dispatch_plan × 4 + dispatch_parallel × 6 + dispatch_config_from_sop × 9 + skill_packager × 9 + worktree × 13 + dispatcher_worktree × 5 + detect × 14 + router × 8 + dispatcher_detect × 8 + review_audit × 26 + review_audit_fix_join × 7 + review_audit_cli × 3）
 
 ### Changed
-- README 头部版本号 v0.2 → v0.3.3；测试数量 76 → 121 → 196 → 279 → 327；架构图红线描述更新（11 红线 + 9 思维检查）
-- README「限制与残余风险」更新：标记 v0.3.x 已修复项,残余 P1 指向 audit-ledger
+- README 头部版本号 v0.2 → v0.3.3 → v0.4.0；测试数量 76 → 121 → 196 → 279 → 327 → 363；架构图红线描述更新（11 红线 + 9 思维检查）
+- README「限制与残余风险」更新：标记 v0.3.x + v0.4 部分修复项,残余 P1 指向 audit-ledger
 - README「知识图谱」章节精简：移除 commit hook 自动更新说明（已撤回），保留图谱产物与手动更新方法
 - `Plan` 模型加 `model_validator` 强制 DAG 校验（B5 阶段补强，v0.2 待做项）
 - `create_dispatcher()` 重构：`use_real_agent` / `auto_detect_platform` 路径分离（C7.3 阶段）
+- `devflow review-audit` 重写（V4.3）：从 v0.3.1-r2 单 spec 简化版升级到 v0.4 多 spec 全面版
 
 ### Changed
 - README 头部版本号 v0.2 → v0.3.3；测试数量 76 → 121；架构图红线描述更新（11 红线 + 9 思维检查）

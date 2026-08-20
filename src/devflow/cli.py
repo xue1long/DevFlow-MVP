@@ -379,64 +379,25 @@ def ci_status():
 
 @app.command(name="review-audit")
 def review_audit():
-    """v0.3.1-r2 P1-13: 扫描 ledger 的 review/fix/escalate 条目,与 review_store 报告做 JOIN
+    """v0.4 阶段 P1-13 完整版:多 spec review/fix JOIN 审计
 
-    不修改 LedgerEntry schema(避免破坏哈希链)。
-    不修改 review_engine.py 写入点(避免 5 处漏算风险)。
-    单 spec 工作流下准确;多 spec 场景需 v0.4 完整方案。
+    架构文档 §9.1 接收反馈闭环：审计 review_store 报告与 ledger 的一致性
+    - orphans: ledger 有 review/fix/escalate 但 review_store 无对应报告
+    - missing_in_ledger: review_store 有报告但 ledger 无记录（反向校验）
+    - fix_orphans / fix_missing_in_ledger: fix 记录的双向 JOIN
+
+    v0.4 触发条件（v0.4-roadmap-paused.md §一）：多 spec 工作流成为主流用法
+    预案 B（v0.4-roadmap-paused.md §二）：用 review_store 文件名反推 + 时间窗推断
+    不扩 LedgerEntry schema（v0.3 INDEX 教训核心）
     """
     storage = _get_storage()
     review_store = ReviewStore(_get_root())
 
     ledger = storage.get_ledger()
-    entries = ledger.get("entries", [])
+    from .engine.review_audit import audit_review_ledger
 
-    # 收集所有 (spec_id, round) 报告键
-    report_keys = set()
-    total_reports = 0
-    for spec_id in review_store.list_spec_ids():
-        for report in review_store.list_reports(spec_id):
-            report_keys.add((spec_id, report.round))
-            total_reports += 1
-
-    # 扫描 ledger 中的 review/fix/escalate 条目
-    review_action_entries = [
-        e for e in entries
-        if e.get("action") in ("review", "fix", "escalate")
-    ]
-
-    # 当前活跃 spec_id(简化:用 ledger 顶层 current_spec_id)
-    # 多 spec 工作流的准确性需 v0.4 改进
-    current_spec_id = ledger.get("current_spec_id")
-
-    # 检测孤儿:ledger 说有 review 但 review_store 没对应报告
-    orphans = []
-    for entry in review_action_entries:
-        details = entry.get("details", "")
-        # 从 details 文本解析 round(如"评审 R1")
-        import re as _re
-        round_match = _re.search(r"R(\d+)", details)
-        if not round_match:
-            continue
-        round_num = int(round_match.group(1))
-        if current_spec_id and (current_spec_id, round_num) not in report_keys:
-            orphans.append({
-                "action": entry["action"],
-                "round": round_num,
-                "missing_report": f"{current_spec_id}/r{round_num}",
-                "entry_details": details[:100],
-            })
-
-    _output({
-        "ok": True,
-        "total_ledger_entries": len(entries),
-        "total_review_actions": len(review_action_entries),
-        "total_reports": total_reports,
-        "current_spec_id": current_spec_id,
-        "scope_note": "v0.3.1-r2:单 spec 工作流下准确;多 spec 场景需 v0.4",
-        "orphans": orphans,
-        "missing_in_ledger_count": 0,  # v0.4 必做项
-    })
+    result = audit_review_ledger(ledger, review_store)
+    _output(result.to_dict())
 
 
 @app.command()
