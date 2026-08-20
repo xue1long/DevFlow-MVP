@@ -23,6 +23,9 @@ from ..verify.gate_runner import GateRunner
 if False:  # 仅用于类型标注，避免循环导入
     from .review_engine import ReviewEngine
 
+# v0.4 P1-10: 引擎层 actor 默认值（CLI 入口可覆盖为 "agent"）
+_DEFAULT_ACTOR = "engine"
+
 
 class PhaseError(Exception):
     """阶段推进错误"""
@@ -52,12 +55,27 @@ class PhaseStateMachine:
         git: Optional[GitPort] = None,
         gate_runner: Optional[GateRunner] = None,
         review_engine: Optional['ReviewEngine'] = None,
+        actor: str = _DEFAULT_ACTOR,
+        session_id: str = "engine",
     ):
         self.storage = storage
         self.config = config
         self.git = git
         self.gate_runner = gate_runner
         self.review_engine = review_engine
+        # v0.4 P1-10: 引擎级 actor/session_id（CLI 入口可覆盖）
+        self._actor = actor
+        self._session_id = session_id
+
+    def _append_ledger(self, entry: LedgerEntry) -> None:
+        """统一 append 入口：v0.4 自动注入 actor/session_id/spec_id"""
+        # spec_id 已在 FSBackend.append_ledger 兜底从 ledger 顶层读
+        # 这里只覆盖 actor/session_id
+        if not entry.actor:
+            entry.actor = self._actor
+        if not entry.session_id:
+            entry.session_id = self._session_id
+        self.storage.append_ledger(entry)
 
     @property
     def current_phase(self) -> int:
@@ -107,7 +125,7 @@ class PhaseStateMachine:
         self.storage.write_spec(spec_id, spec.model_dump(mode="json"))
         self.storage.set_current_spec_id(spec_id)
 
-        self.storage.append_ledger(LedgerEntry(
+        self._append_ledger(LedgerEntry(
             phase=0,
             action=LedgerAction.TRIAGE,
             details=f"Intake 创建: triage_state={intake.triage_state.value}",
@@ -150,7 +168,7 @@ class PhaseStateMachine:
             return {"ok": True, "phase": phase, "message": "工作流已完成（已在 finish 阶段）"}
 
         self.storage.set_current_phase(new_phase)
-        self.storage.append_ledger(LedgerEntry(
+        self._append_ledger(LedgerEntry(
             phase=new_phase,
             action=LedgerAction.PHASE_TRANSITION,
             details=f"{self.PHASE_NAMES[phase]} → {self.PHASE_NAMES[new_phase]}",
@@ -198,7 +216,7 @@ class PhaseStateMachine:
 
         spec.status = SpecStatus.APPROVED
         self.storage.write_spec(spec_id, spec.model_dump(mode="json"))
-        self.storage.append_ledger(LedgerEntry(
+        self._append_ledger(LedgerEntry(
             phase=1,
             action=LedgerAction.APPROVE,
             details=f"Spec '{spec_id}' approved",
@@ -238,7 +256,7 @@ class PhaseStateMachine:
         self.storage.write_plan(plan_id, plan.model_dump(mode="json"))
         self.storage.set_current_plan_id(plan_id)
 
-        self.storage.append_ledger(LedgerEntry(
+        self._append_ledger(LedgerEntry(
             phase=self.current_phase,
             action=LedgerAction.ARTIFACT,
             details=f"Plan '{plan_id}' 已创建，含 {len(tasks)} 个 Task",
@@ -272,7 +290,7 @@ class PhaseStateMachine:
         plan.tasks.append(task)
         self.storage.write_plan(plan_id, plan.model_dump(mode="json"))
 
-        self.storage.append_ledger(LedgerEntry(
+        self._append_ledger(LedgerEntry(
             phase=self.current_phase,
             task_id=task.id,
             action=LedgerAction.ARTIFACT,
@@ -331,7 +349,7 @@ class PhaseStateMachine:
         task.status = TaskStatus.CONTRACTED
         self.storage.write_plan(plan_id, plan.model_dump(mode="json"))
 
-        self.storage.append_ledger(LedgerEntry(
+        self._append_ledger(LedgerEntry(
             phase=self.current_phase,
             task_id=task_id,
             action=LedgerAction.ARTIFACT,
@@ -363,7 +381,7 @@ class PhaseStateMachine:
 
         task.status = TaskStatus.SKIPPED
         self.storage.write_plan(plan_id, plan.model_dump(mode="json"))
-        self.storage.append_ledger(LedgerEntry(
+        self._append_ledger(LedgerEntry(
             phase=self.current_phase,
             task_id=task_id,
             action=LedgerAction.SKIP,
@@ -423,7 +441,7 @@ class PhaseStateMachine:
         task.status = TaskStatus.DONE
         task.commits.append(sha)
         self.storage.write_plan(plan_id, plan.model_dump(mode="json"))
-        self.storage.append_ledger(LedgerEntry(
+        self._append_ledger(LedgerEntry(
             phase=self.current_phase,
             task_id=task_id,
             action=LedgerAction.COMMIT,
@@ -439,7 +457,7 @@ class PhaseStateMachine:
         handoff_content = self._generate_handoff(phase, spec_id, note)
         self.storage.write_handoff(phase, handoff_content)
         self.storage.set_suspended(True)
-        self.storage.append_ledger(LedgerEntry(
+        self._append_ledger(LedgerEntry(
             phase=phase,
             action=LedgerAction.SUSPEND,
             details=note or "suspend",
@@ -466,7 +484,7 @@ class PhaseStateMachine:
         # 恢复阶段 + 写账本
         self.storage.set_current_phase(phase)
         self.storage.set_suspended(False)
-        self.storage.append_ledger(LedgerEntry(
+        self._append_ledger(LedgerEntry(
             phase=phase,
             action=LedgerAction.RESUME,
             details=f"从 handoff-{phase}.md 恢复"

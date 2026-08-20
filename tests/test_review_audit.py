@@ -75,22 +75,22 @@ class TestInferSpecIdForLedgerEntry:
     """_infer_spec_id_for_ledger_entry 时间窗推断"""
 
     def test_explicit_spec_id_field(self):
-        """1. 显式字段优先级最高"""
+        """1. 显式字段优先级最高（v0.4 P1-13 主要路径）"""
         entry = {"spec_id": "explicit-spec", "details": "review something"}
         assert _infer_spec_id_for_ledger_entry(
             entry, {"other-spec"}, current_spec_id="current-spec"
         ) == "explicit-spec"
 
-    def test_details_contains_spec_id(self):
-        """2. details 文本含 spec_id 关键字"""
-        entry = {"details": "评审 spec-1 R1 完成"}
+    def test_no_explicit_field_falls_back_to_current(self):
+        """2. 无显式字段 → fallback current_spec_id（v0.3 单 spec 兼容）"""
+        entry = {"details": "评审 spec-1 R1 完成"}  # v0.4 不再文本解析
         assert _infer_spec_id_for_ledger_entry(
             entry, {"spec-1", "spec-2"}, current_spec_id="current"
-        ) == "spec-1"
+        ) == "current"
 
     def test_fallback_to_current_spec_id(self):
         """3. fallback current_spec_id（v0.3 单 spec 行为）"""
-        entry = {"details": "普通 details，无 spec_id 关键字"}
+        entry = {"details": "普通 details，无 spec_id 字段"}
         assert _infer_spec_id_for_ledger_entry(
             entry, set(), current_spec_id="current-spec"
         ) == "current-spec"
@@ -196,11 +196,11 @@ class TestAuditReviewLedgerMultiSpec:
     """多 spec 全面场景（v0.4 核心）"""
 
     def test_multi_spec_all_aligned(self):
-        """多 spec 全部对齐"""
+        """多 spec 全部对齐（v0.4 走显式 spec_id 字段）"""
         ledger = _make_ledger([
-            {"action": "review", "details": "评审 spec-1 R1 完成"},
-            {"action": "review", "details": "评审 spec-2 R1 完成"},
-            {"action": "fix", "details": "修复 spec-1 R1: 补全"},
+            {"action": "review", "spec_id": "spec-1", "details": "评审 R1 完成"},
+            {"action": "review", "spec_id": "spec-2", "details": "评审 R1 完成"},
+            {"action": "fix", "spec_id": "spec-1", "details": "修复 R1: 补全"},
         ], current_spec_id="spec-1")
         review_store = _make_mock_review_store({
             "spec-1": [1],
@@ -213,12 +213,12 @@ class TestAuditReviewLedgerMultiSpec:
         assert result.missing_in_ledger == []
 
     def test_multi_spec_orphan_in_one_spec(self):
-        """多 spec：spec-2 有 orphan，spec-1 正常"""
+        """多 spec：spec-2 有 orphan，spec-1 正常（v0.4 显式字段）"""
         ledger = _make_ledger([
-            {"action": "review", "details": "评审 spec-1 R1 完成"},
-            {"action": "review", "details": "评审 spec-2 R1 完成"},
+            {"action": "review", "spec_id": "spec-1", "details": "评审 R1 完成"},
+            {"action": "review", "spec_id": "spec-2", "details": "评审 R1 完成"},
             # spec-2 R2: ledger 有但 review_store 无
-            {"action": "review", "details": "评审 spec-2 R2 完成"},
+            {"action": "review", "spec_id": "spec-2", "details": "评审 R2 完成"},
         ], current_spec_id="spec-1")
         review_store = _make_mock_review_store({
             "spec-1": [1],
@@ -231,9 +231,9 @@ class TestAuditReviewLedgerMultiSpec:
         assert result.orphans[0]["round"] == 2
 
     def test_multi_spec_missing_in_one_spec(self):
-        """多 spec：spec-2 有 missing_in_ledger，spec-1 正常"""
+        """多 spec：spec-2 有 missing_in_ledger，spec-1 正常（v0.4 显式字段）"""
         ledger = _make_ledger([
-            {"action": "review", "details": "评审 spec-1 R1 完成"},
+            {"action": "review", "spec_id": "spec-1", "details": "评审 R1 完成"},
         ], current_spec_id="spec-1")
         review_store = _make_mock_review_store({
             "spec-1": [1],
@@ -245,10 +245,10 @@ class TestAuditReviewLedgerMultiSpec:
         assert all(m["spec_id"] == "spec-2" for m in result.missing_in_ledger)
 
     def test_per_spec_summary(self):
-        """per_spec_summary 应按 spec 分组统计"""
+        """per_spec_summary 应按 spec 分组统计（v0.4 显式字段）"""
         ledger = _make_ledger([
-            {"action": "review", "details": "评审 spec-1 R1 完成"},
-            {"action": "review", "details": "评审 spec-2 R1 完成"},
+            {"action": "review", "spec_id": "spec-1", "details": "评审 R1 完成"},
+            {"action": "review", "spec_id": "spec-2", "details": "评审 R1 完成"},
         ], current_spec_id="spec-1")
         review_store = _make_mock_review_store({
             "spec-1": [1],
@@ -266,10 +266,10 @@ class TestAuditReviewLedgerMultiSpec:
         assert result.per_spec_summary[1]["rounds"] == [1, 2]
 
     def test_no_current_spec_id_with_multi_spec(self):
-        """无 current_spec_id 但 details 文本含 spec_id"""
+        """无 current_spec_id 但显式 spec_id 字段（v0.4 路径）"""
         ledger = _make_ledger([
-            {"action": "review", "details": "评审 spec-1 R1 完成"},
-            {"action": "review", "details": "评审 spec-2 R1 完成"},
+            {"action": "review", "spec_id": "spec-1", "details": "评审 R1 完成"},
+            {"action": "review", "spec_id": "spec-2", "details": "评审 R1 完成"},
         ], current_spec_id=None)
         review_store = _make_mock_review_store({
             "spec-1": [1],
@@ -277,7 +277,7 @@ class TestAuditReviewLedgerMultiSpec:
         })
 
         result = audit_review_ledger(ledger, review_store)
-        # details 文本推断应能找到 spec_id
+        # 显式字段足够定位 spec_id
         assert result.orphans == []
         assert result.missing_in_ledger == []
 

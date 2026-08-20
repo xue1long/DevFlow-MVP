@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import sys
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -66,6 +67,21 @@ def _get_config():
         typer.echo(json.dumps({"ok": False, "message": "sop.yaml 不存在，请先执行 devflow init"}, ensure_ascii=False))
         raise typer.Exit(code=1)
     return load_sop(sop_path)
+
+
+# v0.4 P1-10: 进程级 session_id，跨条目归组（同一次 CLI 调用一个会话）
+_SESSION_ID: str = ""
+
+
+def _get_session_id() -> str:
+    """获取本次 CLI 进程的唯一 session_id（UUID 前 8 字符）
+
+    进程级单例：同一次 CLI 调用内所有 append_ledger 都用同一个 session_id。
+    """
+    global _SESSION_ID
+    if not _SESSION_ID:
+        _SESSION_ID = uuid.uuid4().hex[:8]
+    return _SESSION_ID
 
 
 def _get_storage() -> StorageBackend:

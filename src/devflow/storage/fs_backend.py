@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 _HASH_FIELDS: frozenset = frozenset({
     "phase", "action", "timestamp", "details",
     "task_id", "commit", "acceptance", "reason", "gate_result",
+    "spec_id", "actor", "session_id", "review_ref",  # v0.4 P1-10 + P1-13 新增
 })
 
 
@@ -304,6 +305,16 @@ class FSBackend(StorageBackend):
                 "chain_head": None, "entries": [],
             }
             entry_dict = entry.model_dump(mode="json")
+            # v0.4 P1-10 + P1-13: 窗口期自动填充审计追溯字段
+            # spec_id 兜底为 ledger 顶层 current_spec_id（写入时已迁移或无 spec 时）
+            if not entry_dict.get("spec_id"):
+                entry_dict["spec_id"] = ledger.get("current_spec_id")
+            # session_id 兜底为 "engine"（引擎内部写入，无 CLI 会话）
+            if not entry_dict.get("session_id"):
+                entry_dict["session_id"] = "engine"
+            # actor 兜底为 "engine"（调用方未指定）
+            if not entry_dict.get("actor"):
+                entry_dict["actor"] = "engine"
             prev_hash = ledger.get("chain_head")
             entry_dict["_hash"] = self._compute_entry_hash(entry_dict, prev_hash)
             entry_dict["_prev_hash"] = prev_hash

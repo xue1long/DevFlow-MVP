@@ -100,37 +100,34 @@ def _infer_spec_id_for_ledger_entry(
     known_spec_ids: set[str],
     current_spec_id: Optional[str],
 ) -> Optional[str]:
-    """时间窗推断：推断 ledger review 条目的 spec_id
+    """推断 ledger review 条目的 spec_id
 
-    优先级（v0.4 预案 B）：
-    1. ledger entry 显式含 spec_id 字段（未来 schema 扩展支持）
-    2. details 文本含 (spec_id, R<n>) 模式（如 "spec-1 R2"）
-    3. fallback 到 ledger 顶层 current_spec_id
-    4. fallback 到 None（未识别，纳入 orphans 让用户检查）
+    v0.4 P1-13 简化：显式字段优先，失败回退 current_spec_id。
+    删除旧版的 3 级推断（details 文本解析 + known_spec_ids 遍历），因为
+    LedgerEntry.spec_id 字段已在写入时自动填充，JOIN 不再靠猜。
+
+    优先级：
+    1. ledger entry 显式含 spec_id 字段（v0.4 写入时自动填充，置信度最高）
+    2. fallback 到 ledger 顶层 current_spec_id（兼容旧账本）
+    3. 未识别 → None（纳入 orphans 让用户检查）
 
     Args:
         entry: ledger entry dict
-        known_spec_ids: review_store 已知的所有 spec_id
+        known_spec_ids: 保留参数（兼容调用方签名，当前未使用）
         current_spec_id: ledger 顶层 current_spec_id
 
     Returns:
         推断的 spec_id 或 None
     """
-    # 1. 显式字段（v0.3 当前无此字段，预留扩展）
+    # 1. 显式字段（v0.4 优先路径）
     if entry.get("spec_id"):
         return entry["spec_id"]
 
-    # 2. details 文本解析
-    details = entry.get("details", "")
-    for spec_id in known_spec_ids:
-        if spec_id in details:
-            return spec_id
-
-    # 3. fallback current_spec_id（v0.3 单 spec 模式）
+    # 2. 兼容旧账本：fallback current_spec_id
     if current_spec_id:
         return current_spec_id
 
-    # 4. 未识别
+    # 3. 未识别
     return None
 
 

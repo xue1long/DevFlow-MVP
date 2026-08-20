@@ -49,3 +49,20 @@ class LedgerEntry(BaseModel):
         default=None,
         description="v0.3.2 P2-14: 门禁执行结果（ok/stdout_tail/stderr_tail）",
     )
+    # --- v0.4 P1-10 + P1-13: 审计追溯字段（窗口期扩展，全部 Optional）---
+    spec_id: Optional[str] = Field(
+        default=None,
+        description="v0.4 P1-13: 关联的 Spec ID（append_ledger 自动填充，替代 time-window 推断）",
+    )
+    actor: Optional[str] = Field(
+        default=None,
+        description="v0.4 P1-10: 操作者标识（agent/human/CI，默认 agent）",
+    )
+    session_id: Optional[str] = Field(
+        default=None,
+        description="v0.4 P1-10: 会话 ID（一次 CLI 调用一个会话，跨条目归组）",
+    )
+    review_ref: Optional[str] = Field(
+        default=None,
+        description="v0.4 P1-13: 关联评审/修复轮次标识（如 r2 / f1）",
+    )

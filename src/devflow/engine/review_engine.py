@@ -141,6 +141,7 @@ class ReviewEngine:
             details=f"评审 R{round}: Standards={report.standards.verdict.value}, "
                     f"违规 {report.total_violations} 条 (fatal={report.fatal_count}, "
                     f"major={report.major_count}, minor={report.minor_count})",
+            review_ref=f"r{round}",  # v0.4 P1-13
         ))
 
         result = {
@@ -283,6 +284,7 @@ class ReviewEngine:
             phase=latest.phase,
             action=LedgerAction.FIX,
             details=f"修复 R{latest.round}: +{len(resolved)} resolved, +{len(residual_list)} residual",
+            review_ref=f"r{latest.round}",  # v0.4 P1-13
         ))
 
         return {
@@ -729,6 +731,7 @@ class ReviewEngine:
             phase=report.phase,
             action=LedgerAction.ESCALATE,
             details=f"评审 R{round} 升级: 超过最大轮次 {self.MAX_REVIEW_ROUNDS}，需人工介入",
+            review_ref=f"r{round}",  # v0.4 P1-13
         ))
 
         return {
@@ -796,6 +799,7 @@ class ReviewEngine:
             action=LedgerAction.ESCALATE,
             details=f"评审 R{round} 升级: 违规数连续 {self.STAGNATION_THRESHOLD} 轮未下降 "
                     f"(轮次 {rounds}，违规数 {counts})，判定死循环，需人工介入",
+            review_ref=f"r{round}",  # v0.4 P1-13
         ))
 
         return {
