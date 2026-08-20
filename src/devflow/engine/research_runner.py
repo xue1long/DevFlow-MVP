@@ -17,8 +17,7 @@
 """
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from concurrent.futures import TimeoutError as FutTimeout
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -173,9 +172,9 @@ class ResearchRunner:
             "fallback_used": fallback_used,
             "message": (
                 f"调研完成,{len(trimmed)} 条引用"
-                + (f" (fallback 已触发)" if fallback_used else "")
+                + (" (fallback 已触发)" if fallback_used else "")
                 + (
-                    f" (全部 backend 失败,fallback=skip)"
+                    " (全部 backend 失败,fallback=skip)"
                     if not sources_used else ""
                 )
             ),
@@ -202,7 +201,6 @@ class ResearchRunner:
         总超时 = (timeout_per_source + 2) * len(backends),确保最坏情况下
         整体完成时间有上界(避免被慢 backend 卡死)
         """
-        from concurrent.futures import wait
         all_citations: list[Citation] = []
         sources_used: list[SourceType] = []
         sources_failed: list[SourceType] = []
