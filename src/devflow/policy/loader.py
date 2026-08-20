@@ -81,6 +81,40 @@ class SDConfig(BaseModel):
     worktree_per_task: bool = Field(default=False)
 
 
+class ResearchConfig(BaseModel):
+    """v0.4 RFC §6.1: 引文式调研 SOP 配置
+
+    从 sop.yaml `research:` 节读取。所有字段有默认值,保证向后兼容
+    (旧 sop.yaml 无 research 段时按默认配置运行)。
+
+    字段语义:
+    - enabled: 总开关;false 时所有 research 路径直接跳过
+    - auto_run_on: 在哪些阶段自动跑调研;MVP 仅 plan_stage
+    - sources: 允许的数据源列表,按优先级排序
+    - max_results_per_source: 单源最大返回数(防噪声)
+    - max_total_chars: 报告最大字符数(防撑爆 Spec)
+    - timeout_per_source: 单源超时(秒)
+    - fallback: 全 backend 失败时行为;skip=不阻断流程,error=抛异常
+    - citation_required: 是否强制要求带 URL + 时间戳
+    - start_keywords: start 阶段 advisory 触发词(防重复造轮子)
+    """
+    enabled: bool = True
+    auto_run_on: list[str] = Field(default_factory=lambda: ["plan_stage"])
+    sources: list[str] = Field(
+        default_factory=lambda: ["github", "pypi", "npm", "web"]
+    )
+    max_results_per_source: int = Field(default=5, ge=1, le=20)
+    max_total_chars: int = Field(default=8000, ge=100, le=50000)
+    timeout_per_source: int = Field(default=10, ge=1, le=60)
+    fallback: str = Field(default="skip")  # skip | error
+    citation_required: bool = True
+    start_keywords: list[str] = Field(
+        default_factory=lambda: [
+            "from scratch", "重新实现", "重写", "造轮子", "自己写一个",
+        ]
+    )
+
+
 class SOPConfig(BaseModel):
     """sop.yaml 完整配置"""
     sop_version: Optional[str] = None
@@ -101,6 +135,8 @@ class SOPConfig(BaseModel):
     thinking: ThinkingConfig = Field(default_factory=ThinkingConfig)
     # v0.3 B6 阶段：SDD 子代理编排配置
     sd: SDConfig = Field(default_factory=SDConfig)
+    # v0.4 新增: 引文式调研配置
+    research: ResearchConfig = Field(default_factory=ResearchConfig)
 
     def get_gate(self, name: str) -> Optional[GateConfig]:
         return self.gates.get(name)
@@ -111,6 +147,21 @@ class SOPConfig(BaseModel):
             (name, g) for name, g in self.gates.items()
             if g.enabled and g.bind_to_stage == stage
         ]
+
+    def is_research_auto_run(self, stage: int) -> bool:
+        """v0.4 RFC §6.1: 是否在指定阶段自动跑调研
+
+        Args:
+            stage: 阶段号 0-7
+
+        Returns:
+            仅在 research.enabled=true 且 stage 在 auto_run_on 中时为 True
+        """
+        if not self.research.enabled:
+            return False
+        # 阶段号 → 阶段名映射(v0.3 默认顺序)
+        stage_name = self.phases[stage] if 0 <= stage < len(self.phases) else ""
+        return f"{stage_name}_stage" in self.research.auto_run_on
 
 
 def _parse_red_lines(raw: list) -> list[RedLineConfig]:

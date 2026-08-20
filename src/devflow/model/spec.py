@@ -53,6 +53,15 @@ class Spec(BaseModel):
         description="Intake 结构化数据: {kind, summary, triage_state, blocked_reason}",
     )
 
+    # v0.4 research 字段（RFC §3.2）：仅存路径引用,内容独立 Markdown
+    research_refs: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "调研报告引用列表（v0.4 RFC §3.2）: "
+            "[{path, summary, sources, trust_level, generated_at, citations_count}]"
+        ),
+    )
+
     @field_validator("title")
     @classmethod
     def title_not_blank(cls, v: str) -> str:

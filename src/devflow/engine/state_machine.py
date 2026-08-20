@@ -125,6 +125,10 @@ class PhaseStateMachine:
         self.storage.write_spec(spec_id, spec.model_dump(mode="json"))
         self.storage.set_current_spec_id(spec_id)
 
+        # v0.4 RFC §7.2: advisory 提示 — 检测 draft 是否含"重复造轮子"触发词
+        # 仅 echo 到 stderr,不阻塞、不污染 JSON 输出
+        self._maybe_advisory_research(spec_id, draft)
+
         self._append_ledger(LedgerEntry(
             phase=0,
             action=LedgerAction.TRIAGE,
@@ -947,3 +951,40 @@ class PhaseStateMachine:
         slug = "-".join(w.lower()[:10] for w in words) if words else "untitled"
         slug = re.sub(r'[^a-z0-9\u4e00-\u9fff-]', '', slug)[:50]
         return f"{date_prefix}-{slug}"
+
+    # --- v0.4 RFC §7.2: advisory 提示 ---
+
+    def _maybe_advisory_research(self, spec_id: str, draft: str) -> None:
+        """检测 draft 是否含"重复造轮子"触发词,提示用户调研
+
+        设计要点:
+        - 仅 echo 到 stderr,不调用任何 backend,不消耗 API 额度
+        - 通过 sop.yaml.research.start_keywords 配置(默认5 个)
+        - 命中关键词时打印建议命令,便于用户手动复制
+        """
+        # 读 SOP 配置(若 research 段缺失则用空列表)
+        keywords = []
+        try:
+            keywords = list(self.config.research.start_keywords)
+        except Exception:
+            keywords = []
+        if not keywords:
+            return
+
+        matched = [k for k in keywords if k.lower() in draft.lower()]
+        if not matched:
+            return
+
+        # 截断 draft 用于提示(避免过长)
+        draft_short = draft[:60] + ("..." if len(draft) > 60 else "")
+        try:
+            import typer
+            typer.echo(
+                f"\n[ADVISORY] 检测到 draft 含触发词: {matched}\n"
+                f"建议在 plan 阶段执行调研,验证是否已有成熟方案:\n"
+                f"  devflow research \"{draft_short}\" --sources github,pypi --spec-id {spec_id}\n",
+                err=True,
+            )
+        except Exception:
+            # 非交互环境(测试)静默
+            pass

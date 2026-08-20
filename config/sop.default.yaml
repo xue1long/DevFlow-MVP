@@ -72,3 +72,22 @@ sop:
   thinking:
     enabled: true
     severity: "minor"
+  # v0.4: 引文式调研配置(RFC §6.1)
+  # 默认启用 plan_stage 自动跑;data_sources 按优先级排序
+  # (agent_reach → github → registry → web);
+  # fallback=skip 保证离线环境不阻断流程。
+  research:
+    enabled: true
+    auto_run_on: [plan_stage]
+    sources: [github, pypi, npm, web]
+    max_results_per_source: 5
+    max_total_chars: 8000
+    timeout_per_source: 10
+    fallback: skip
+    citation_required: true
+    start_keywords:
+      - "from scratch"
+      - "重新实现"
+      - "重写"
+      - "造轮子"
+      - "自己写一个"

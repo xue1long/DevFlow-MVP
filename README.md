@@ -91,6 +91,8 @@ devflow history
 | `devflow list-active` | * | 列出活跃（未归档）Spec |
 | `devflow list-archived` | * | 列出已归档 Spec |
 | `devflow find <关键词> [--all]` | * | 跨 Spec/Plan/Review 文件搜索 |
+| `devflow research "<query>" [--spec-id] [--sources] [--max-results]` | 2+ | 引文式调研（不重复造轮子），产物落 `docs/devflow/research/` + 写入 `Spec.research_refs` |
+| `devflow plan --with-research` | 2 | plan 阶段自动跑 research（也可由 `sop.research.auto_run_on=[plan_stage]` 隐式触发）|
 
 ## 阶段对照表
 
@@ -98,7 +100,7 @@ devflow history
 |------|------|--------|----------|
 | 0 | intake | 需求登记 | 创建 Spec 草稿 + Intake |
 | 1 | brainstorm | 方案澄清 | 编辑/完善 Spec（goals/non_goals/problem） |
-| 2 | plan | 计划 | 创建 Plan + Task 列表 |
+| 2 | plan | 计划 | 创建 Plan + Task 列表（可选自动跑 research 验证是否有成熟方案） |
 | 3 | contract | 契约 | 为每个 Task 写 Contract（module + 签名） |
 | 4 | implement | 实现 | 写代码 + git 提交 |
 | 5 | verify | 验证 | tests_pass 门禁（pytest 等） |
@@ -115,6 +117,39 @@ devflow history
 
 ### Contract
 Stage3 产出：Task 的接口契约（module + interface_signature）。
+
+### Research（v0.4 引文式调研）
+辅助需求草稿与 plan 阶段，按"不重复造轮子"原则产出**带引用**的调研报告。
+
+**触发方式**：
+- 显式：`devflow research "<query>" --sources github,pypi,web`
+- 隐式：`devflow plan --with-research`（或 SOP `research.auto_run_on=[plan_stage]`）
+- Advisory：`devflow start` 检测到 `from scratch` / `重新实现` 等触发词时输出提示（不自动执行）
+
+**执行链**（按优先级）：
+1. `agent_reach`（主路径，复用宿主平台已加载的 `agent-reach` skill，覆盖 15+ 平台）
+2. `github_search`（兜底1，GitHub Repository Search API）
+3. `registry_query`（兜底2，PyPI + npm + crates.io）
+4. `web_search`（兜底3，通用 web 搜索）
+
+**产物**：
+- Markdown 报告：`docs/devflow/research/<spec-id>-<timestamp>.md`
+- Spec 引用：追加到 `spec.research_refs`（仅路径，不嵌入内容，避免漂移）
+- 账本条目：`action=research, phase=2`，便于审计
+
+**SOP 配置**（`sop.yaml`）：
+```yaml
+research:
+  enabled: true
+  auto_run_on: [plan_stage]
+  sources: [github, pypi, npm, web]
+  max_results_per_source: 5
+  max_total_chars: 8000
+  timeout_per_source: 10
+  fallback: skip     # 离线时跳过，不阻断流程
+  citation_required: true
+  start_keywords: ["from scratch", "重新实现", "重写", "造轮子"]
+```
 
 ### 双轴评审（v0.2）
 - **Standards 轴**：自动检查（huge_pr / no_test / cross_module_import / 等 6 条规则）

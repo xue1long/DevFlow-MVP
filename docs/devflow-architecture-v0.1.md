@@ -283,7 +283,11 @@ Intake:
 
 - **大型 effort 的决策地图（`wayfinder`）**：当 `plan` 阶段（Stage2）识别到工作量超大、无法拆成单切片时，先产出一张"决策 ticket 共享地图"——把待定的架构/范围决策显式列为 ticket，供人类先拍板，再据此拆 `Task` DAG。避免 agent 在不确定方向上盲目推进。
 - **原型验证（`prototype`）**：`brainstorm` 阶段（Stage1）对拿不准的设计问题，允许产出一个**一次性、可弃**的 HTML 原型（如交互流、数据模型可视化）来对齐认知，不进账本、不进交付。
-- **引文式调研（`research`）**：`plan` 阶段需外部事实支撑时，调用 `research` 产出带引用的 Markdown（高信任源），作为 `Spec`/`Plan` 的依据，引用一并入 Spec。
+- **引文式调研（`research`，v0.4 已落地）**：`plan` 阶段需外部事实支撑时，调用 `research` 产出**带引用的 Markdown**（高信任源），作为 `Spec`/`Plan` 的依据，**引用以路径引用方式入 Spec**（不嵌入内容，避免交接时漂移）。
+
+  **执行链**（按优先级，§4）：优先复用宿主平台的 `agent-reach` skill（15+ 平台多 backend）；DevFlow 内置 GitHub Search / PyPI / npm / crates.io / Web search 作为离线/CI 兜底。
+
+  **纪律**：适配层（§7）仅做协议转换（外部 API → `Citation`）；编排层（`engine/research_runner.py`）负责并发/去重/截断/落盘/`spec.research_refs` 更新/账本（`action=research`）。SOP 可关停（`research.enabled=false`）、离线不阻断（`fallback=skip`）。
 - **盘问对齐（`grill-me` + `grilling` 原语）**：对非代码向的方案/设计，`brainstorm` 阶段用盘问访谈技术逼出隐含假设与边界，与 `grill-with-docs`（§4.6）共用同一"盘问对齐"原语。
 
 ### 5.4 Finish 子流程与 Handoff 增强（Tier2 来自 `resolving-merge-conflicts` / `wizard` / `handoff`）
@@ -304,7 +308,8 @@ Intake:
 ### 6.1 工具清单
 | 工具 | 输入 | 输出 |
 |---|---|---|
-| `devflow.start(spec_draft)` | 需求草稿 | `Spec` 模板 + 进入 Stage1 指引 |
+| `devflow.start(spec_draft)` | 需求草稿 | `Spec` 模板 + 进入 Stage1 指引；advisory 提示是否需要调研 |
+| `devflow.research(query, sources, spec_id)` | 调研关键词 | 带引用 Markdown 路径 + 引用列表 + `Spec.research_refs` 增量；plan 阶段自动跑 |
 | `devflow.next()` | 当前上下文 | 下一允许动作 + 应调用 skill + 必产工件 |
 | `devflow.status()` | — | 当前阶段、阻塞项、账本摘要 |
 | `devflow.gate(phase)` | 阶段号 | 各 QualityGate 结果（pass/fail/挂账） |
@@ -591,7 +596,7 @@ devflow/
 |---|---|---|---|---|
 | 10 | **prototype** | 用一次性 HTML 原型回答设计问题 | Stage1 brainstorm / 设计验证 | **吸收**：原型验证作 Spec 阶段设计确认技术（轻量、可弃） |
 | 11 | **diagnosing-bugs** | 硬 bug 诊断循环：建反馈环→最小化→假设→测试→修复 | 新增 `debug` 能力/阶段 + 存储验证 | **吸收（Tier1）**：紧致可红反馈环律、10 种建环法、先回归测试后修复、`[DEBUG-*]` 清理纪律 |
-| 12 | **research** | 基于高信任源调查，生成带引用 Markdown | Stage2 plan（调研） | **吸收**：计划阶段"引文式调研"子能力 |
+| 12 | **research** | 基于高信任源调查，生成带引用 Markdown | Stage2 plan（调研）+ Stage0 advisory | **吸收 + 已落地（v0.4）**：`engine/research_runner.py` + `adapters/research/` 4 backend；优先复用宿主 `agent-reach` skill，内置 GitHub/PyPI/npm/crates/Web search 兜底；SOP 可关停，离线不阻断 |
 | 13 | **tdd** | 红绿重构，seam 概念，反模式 | 领域模型 `Contract` + Stage3 | **吸收（Tier2）**：seam（只测预约定边界）、三条反模式（实现耦合/同义反复/水平切片）、"重构归 review"——与阶段切分对齐 |
 | 14 | **domain-modeling** | 主动构建/锐化领域模型，更新 CONTEXT.md | 领域模型 `DomainModel`（与 #2 同工件） | **吸收**：领域模型主动维护机制，作 CONTEXT.md 的写入方 |
 | 15 | **codebase-design** | 深度模块设计的共享规范与词汇（seam/adapter/locality/leverage） | 领域模型 / 设计词典 + 模块边界约束 | **吸收**：作 DevFlow"设计词典"，被 tdd/review 引用 |

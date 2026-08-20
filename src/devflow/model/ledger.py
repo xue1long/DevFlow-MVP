@@ -26,6 +26,8 @@ class LedgerAction(str, Enum):
     FIX = "fix"
     ESCALATE = "escalate"
     ARCHIVE = "archive"
+    # v0.4 新增: 引文式调研动作
+    RESEARCH = "research"
 
 
 class LedgerEntry(BaseModel):

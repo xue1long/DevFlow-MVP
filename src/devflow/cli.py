@@ -157,6 +157,7 @@ def init():
   tooling: {test_runner: "pytest", import_mode: "importlib", proxy_strip: true, command_timeout: 120}
   storage: {backend: fs, specs_dir: docs/devflow/specs, plans_dir: docs/devflow/plans, ledger: docs/devflow/progress.yaml, glossary: CONTEXT.md, content_address: false}
   allow_fast_forward: false
+  research: {enabled: true, auto_run_on: [plan_stage], sources: [github, pypi, npm, web], max_results_per_source: 5, max_total_chars: 8000, timeout_per_source: 10, fallback: skip, citation_required: true}
 """
     storage.init_workspace(sop_content)
     # v0.3.4: init 输出清单从 storage.layout 取（与真实路径一致）
@@ -468,10 +469,141 @@ def review(
 @app.command()
 def plan(
     tasks: list[str] = typer.Option([], "--task", help="初始 Task 描述，格式 '标题|模块|验收标准'"),
+    with_research: bool = typer.Option(
+        False, "--with-research",
+        help="plan 阶段自动跑调研(从当前 Spec.problem 抽取关键词)",
+    ),
 ):
     """创建计划（Stage2 plan 阶段）"""
-    machine, _, config = _get_machine()
+    machine, storage, config = _get_machine()
+
+    # v0.4: --with-research 钩子(显式)或 sop.research.auto_run_on=[plan_stage](隐式)
+    should_research = with_research or config.is_research_auto_run(2)
+    if should_research and config.research.enabled:
+        spec_id = storage.get_current_spec_id()
+        spec_data = storage.read_spec(spec_id) if spec_id else None
+        if spec_id and spec_data:
+            problem = spec_data.get("problem", "")[:100]
+            if problem:
+                _run_research(
+                    query=problem,
+                    spec_id=spec_id,
+                    storage=storage,
+                    config=config,
+                    emit_echo=False,
+                )
+
     result = machine.create_plan(tasks)
+    _output(result)
+
+
+# --- v0.4 RFC §7.1: research 命令 ---
+
+def _run_research(
+    query: str,
+    spec_id: str,
+    storage: StorageBackend,
+    config,
+    emit_echo: bool = True,
+) -> dict:
+    """内部辅助:实际跑 research 并落盘
+
+    Args:
+        query: 调研关键词
+        spec_id: 关联 Spec
+        storage: storage backend
+        config: SOPConfig(读 .research 段)
+        emit_echo: True 时把结果输出到 stderr(给人看);
+                   False 时静默(plan --with-research 自动调用)
+    """
+    from .engine.research_runner import ResearchRunner
+    from .model.research import SourceType
+
+    runner = ResearchRunner(
+        storage=storage,
+        config=config.research,
+        workspace_root=_get_root(),
+    )
+    sources = [SourceType(s) for s in config.research.sources]
+    result = runner.run(
+        query=query,
+        spec_id=spec_id,
+        sources=sources,
+    )
+    if emit_echo:
+        # 用 stderr 输出(advisory,不污染主 JSON)
+        if result["ok"]:
+            typer.echo(
+                f"[research] {result['citations_count']} 条引用"
+                + (f" (fallback 已触发)" if result["fallback_used"] else "")
+                + f" → {result['report_path']}",
+                err=True,
+            )
+        else:
+            typer.echo(
+                f"[research] 失败:{result['message']}",
+                err=True,
+            )
+    return result
+
+
+@app.command()
+def research(
+    query: str = typer.Argument(..., help="调研关键词"),
+    spec_id: Optional[str] = typer.Option(
+        None, "--spec-id", "-s",
+        help="关联 Spec(默认取当前活跃 Spec)",
+    ),
+    sources: str = typer.Option(
+        "github,pypi,web", "--sources",
+        help="数据源列表,逗号分隔(github/pypi/npm/crates/web)",
+    ),
+    max_results: int = typer.Option(
+        5, "--max-results", "-n",
+        help="单源最大返回数(1-20)",
+    ),
+):
+    """执行引文式调研,产出带引用的 Markdown
+
+    v0.4 RFC §7.1:辅助需求草稿 + plan 阶段,验证是否已有成熟方案。
+    """
+    machine, storage, config = _get_machine()
+
+    # 解析 spec_id
+    target_spec_id = spec_id or storage.get_current_spec_id()
+    if not target_spec_id:
+        _output({
+            "ok": False,
+            "message": "未指定 spec_id 且无活跃 Spec,请先 devflow start",
+        })
+        raise typer.Exit(code=1)
+
+    # 解析 sources(命令行覆盖 SOP 默认)
+    from .model.research import SourceType as ST
+    try:
+        src_list = [ST(s.strip()) for s in sources.split(",") if s.strip()]
+    except ValueError as e:
+        _output({
+            "ok": False,
+            "message": f"无效的 sources 值: {e};可选: {[s.value for s in ST]}",
+        })
+        raise typer.Exit(code=1)
+
+    # 构造一个临时 SOPConfig.research(命令行 sources + max_results 覆盖)
+    research_cfg = config.research.model_copy(update={
+        "max_results_per_source": max_results,
+        "sources": [s.value for s in src_list],
+    })
+    # 临时替换
+    config_adjusted = config.model_copy(update={"research": research_cfg})
+
+    result = _run_research(
+        query=query,
+        spec_id=target_spec_id,
+        storage=storage,
+        config=config_adjusted,
+        emit_echo=False,
+    )
     _output(result)
 
 
