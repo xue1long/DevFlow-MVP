@@ -43,6 +43,20 @@
   - `sop.yaml` 新增 `sd:` 配置节（向前兼容，旧 sop.yaml 用默认值）
   - `_dispatch_config_from_sop()` 字段映射
   - `create_dispatcher()` 自动 fallback 到 sop.yaml 文件
+- **v0.3 Worktree 隔离（B7 阶段 · SDD 完整化）**：
+  - `src/devflow/engine/worktree.py` `safe_id()` 处理 plan_id 特殊字符（/、空格、冒号等）
+  - `create_worktree_for_plan()` 含 git 分支 fallback（非 git 仓库降级 / 已存在分支用 add 而非 -b）
+  - `Dispatcher.dispatch_task()` 集成 `worktree_per_task` 配置（启用时为每个 Task 创建隔离 git worktree）
+  - worktree 路径传给 `SubagentTask.worktree` 字段
+  - worktree 创建失败 → `DispatchResult.error`，不阻断整个 dispatch
+- **v0.3 平台 detect + 路由（C7 阶段）**：
+  - `src/devflow/adapters/detect.py` `Platform` / `IntegrationMode` 枚举
+  - `detect_platform()` 5 平台环境变量探测（CLAUDE_CODE / WORKBUDDY_RUNTIME / CODEBUDDY_RUNTIME / DEVFLOW_MCP_HOST / 默认 CLI）
+  - `detect_integration_mode()` 平台能力矩阵（架构文档 §6 双集成面）
+  - `is_mcp_callable` / `is_skill_callable` 辅助函数
+  - `src/devflow/adapters/router.py` `select_invoker()` / `route_invocation()` 统一入口
+  - `create_dispatcher(auto_detect_platform=True)` 默认值（按 detect_platform 自动选 Agent Runner）
+  - CLI `devflow adapter-export --auto-detect` flag（按环境变量自动选平台）
 - **v0.3 适配层纪律（A2 阶段）**：
   - `src/devflow/adapters/__init__.py` 写入 v0.3 纪律（4 禁 3 允）
 - **v0.3 CLI 接口契约注释（A1 阶段）**：
@@ -52,13 +66,14 @@
 - **v0.3 Skill manifest 自动派生（C3 阶段）**：
   - `src/devflow/adapters/manifest.py` SkillManifest / SkillArg 数据模型
   - `src/devflow/adapters/manifest_builder.py` `build_manifests_from_cli()` 自动从 typer app 派生
-- 新增 105 个测试（json_schema × 11 + invoker × 6 + manifest_builder × 8 + mcp_server × 4 + dag × 12 + plan_dag × 11 + dispatcher_models × 12 + circuit_breaker × 8 + agent_runner × 6 + dispatcher × 6 + dispatch_plan × 4 + dispatch_parallel × 6 + dispatch_config_from_sop × 9 + skill_packager × 9 + 其他）
+- 新增 135 个测试（json_schema × 11 + invoker × 6 + manifest_builder × 8 + mcp_server × 4 + dag × 12 + plan_dag × 11 + dispatcher_models × 12 + circuit_breaker × 8 + agent_runner × 6 + dispatcher × 6 + dispatch_plan × 4 + dispatch_parallel × 6 + dispatch_config_from_sop × 9 + skill_packager × 9 + worktree × 13 + dispatcher_worktree × 5 + detect × 14 + router × 8 + dispatcher_detect × 8）
 
 ### Changed
-- README 头部版本号 v0.2 → v0.3.3；测试数量 76 → 121 → 196 → 279；架构图红线描述更新（11 红线 + 9 思维检查）
+- README 头部版本号 v0.2 → v0.3.3；测试数量 76 → 121 → 196 → 279 → 327；架构图红线描述更新（11 红线 + 9 思维检查）
 - README「限制与残余风险」更新：标记 v0.3.x 已修复项,残余 P1 指向 audit-ledger
 - README「知识图谱」章节精简：移除 commit hook 自动更新说明（已撤回），保留图谱产物与手动更新方法
 - `Plan` 模型加 `model_validator` 强制 DAG 校验（B5 阶段补强，v0.2 待做项）
+- `create_dispatcher()` 重构：`use_real_agent` / `auto_detect_platform` 路径分离（C7.3 阶段）
 
 ### Changed
 - README 头部版本号 v0.2 → v0.3.3；测试数量 76 → 121；架构图红线描述更新（11 红线 + 9 思维检查）
