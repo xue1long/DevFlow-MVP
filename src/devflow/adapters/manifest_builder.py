@@ -12,7 +12,7 @@ from typing import Any, get_type_hints
 
 import typer
 
-from ..util.json_schema import python_type_to_json_schema
+from ..util.json_schema import python_type_to_json_schema, is_recognized_type
 from .manifest import SkillArg, SkillManifest
 
 
@@ -51,7 +51,7 @@ def build_manifests_from_cli(app: typer.Typer) -> list[SkillManifest]:
             hint = hints.get(p.name, str)
             arg_type = python_type_to_json_schema(hint)
             # v0.3.4 #39: 类型降级时 warning（未注册类型 → string）
-            if arg_type == "string" and hint is not str:
+            if arg_type == "string" and not is_recognized_type(hint):
                 import warnings
                 warnings.warn(
                     f"参数 {cmd_info.name or cmd_info.callback.__name__}."

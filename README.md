@@ -1,6 +1,6 @@
 # DevFlow — 方案驱动开发工作流引擎
 
-> **v0.3.3** — 给 AI Agent 用的流程引擎：8 阶段不可跳步，逐阶段出口门禁，双轴评审闭环，append-only 可审计账本，9 条思维模型检查内置。
+> **v0.3.4** — 给 AI Agent 用的流程引擎：8 阶段不可跳步，逐阶段出口门禁，双轴评审闭环，append-only 可审计账本，9 条思维模型检查内置。
 
 ## 核心特性
 
@@ -144,7 +144,7 @@ sop:
 ## 测试
 
 ```bash
-# 全部测试（121 passed / 1 skipped）
+# 全部测试（366 passed / 0 skipped）
 python -m pytest tests/ -v
 
 # 仅 P0/P1 整改验证测试（12 个）

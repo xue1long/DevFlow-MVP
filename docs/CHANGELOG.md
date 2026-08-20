@@ -6,6 +6,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- **v0.3.4 #39 根治**: `is_recognized_type()` 替代 `hint is not str`，消除 4 个 manifest 类型降级 warning
+- `pyproject.toml` 版本号同步到 0.3.4（从 0.1.0）
+- README 测试数更新为 375 passed（从 121 passed）
+
 ### Added
 - `RedLineAuditor.implemented_rule_names()`：返回已实现自动检测的红线名称列表（audit 覆盖度展示用）
 - **v0.3 双集成面之 MCP Server（B1 阶段）**：

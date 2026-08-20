@@ -58,6 +58,44 @@ def python_type_to_json_schema(annotation: Any) -> str:
         return "boolean"
     if annotation in (float,) or name == "float":
         return "number"
+    # Path 显式映射为 string
+    if annotation is Path or name == "Path":
+        return "string"
 
-    # 路径 / 自定义类 → string 降级
+    # 自定义类 → string 降级
     return "string"
+
+
+def is_recognized_type(annotation: Any) -> bool:
+    """判断类型注解是否已在映射表中（不会降级到 string）
+
+    用于 manifest_builder 的 warning 判定：只对真正未注册的
+    自定义类型告警，Path / Optional[str] 等有意映射不算降级。
+
+    Examples:
+        >>> is_recognized_type(str)
+        True
+        >>> is_recognized_type(Optional[str])
+        True
+        >>> is_recognized_type(Path)
+        True
+        >>> class Foo: ...
+        >>> is_recognized_type(Foo)
+        False
+    """
+    origin = get_origin(annotation)
+    if origin is not None:
+        if origin is list or origin is dict:
+            return True
+        # Union / Optional[T]：任一非 None 参数可识别即视为可识别
+        args = get_args(annotation)
+        non_none = [a for a in args if a is not type(None)]
+        return bool(non_none) and all(is_recognized_type(a) for a in non_none)
+
+    name = getattr(annotation, "__name__", "")
+    if annotation in (str, int, bool, float) or name in ("str", "int", "bool", "float"):
+        return True
+    if annotation is Path or name == "Path":
+        return True
+
+    return False

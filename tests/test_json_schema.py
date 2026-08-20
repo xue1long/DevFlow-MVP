@@ -5,6 +5,7 @@
 - Optional[T] → 取 T 的 schema
 - Path / 自定义类 → string 降级
 - 边界场景 (None / 复杂泛型)
+- v0.3.4 #39: is_recognized_type（manifest warning 判定）
 """
 from __future__ import annotations
 
@@ -13,7 +14,10 @@ from typing import Optional, Union
 
 import pytest
 
-from devflow.util.json_schema import python_type_to_json_schema
+from devflow.util.json_schema import (
+    python_type_to_json_schema,
+    is_recognized_type,
+)
 
 
 class TestBasicTypes:
@@ -74,3 +78,53 @@ class TestEdgeCases:
         # 自定义类名为 "str"，应被识别为 string（降级处理）
         result = python_type_to_json_schema(str)
         assert result == "string"
+
+
+class TestIsRecognizedType:
+    """v0.3.4 #39: manifest warning 判定 —— 只对真正未注册类型告警"""
+
+    def test_primitives_recognized(self):
+        for t in (str, int, bool, float):
+            assert is_recognized_type(t) is True, f"{t} 应可识别"
+
+    def test_optional_str_recognized(self):
+        assert is_recognized_type(Optional[str]) is True
+
+    def test_union_with_int_recognized(self):
+        assert is_recognized_type(Union[int, None]) is True
+
+    def test_path_recognized(self):
+        assert is_recognized_type(Path) is True
+
+    def test_list_recognized(self):
+        assert is_recognized_type(list[str]) is True
+
+    def test_dict_recognized(self):
+        assert is_recognized_type(dict[str, int]) is True
+
+    def test_custom_class_not_recognized(self):
+        class Custom:
+            pass
+
+        assert is_recognized_type(Custom) is False
+
+    def test_union_mixed_not_recognized(self):
+        """Union[str, Custom] 含未注册类型 → 视为不可识别（应告警）"""
+
+        class Custom:
+            pass
+
+        assert is_recognized_type(Union[str, Custom]) is False
+
+    def test_manifest_build_no_warning(self):
+        """构建 CLI manifest 不应触发类型降级 warning（回归 #39）"""
+        import warnings
+
+        from devflow.cli import app
+        from devflow.adapters.manifest_builder import build_manifests_from_cli
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            # 不应抛 UserWarning（OPtional[str] / Path 均已注册）
+            manifests = build_manifests_from_cli(app)
+        assert len(manifests) >= 20

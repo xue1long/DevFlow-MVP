@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "devflow"
-version = "0.1.0"
+version = "0.3.4"
 description = "DevFlow — 方案驱动开发工作流引擎 (MVP)"
 readme = "README.md"
 license = {text = "MIT"}
