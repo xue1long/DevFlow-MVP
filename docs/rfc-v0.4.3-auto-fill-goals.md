@@ -3,10 +3,11 @@ title: DevFlow RFC v0.4.3 — Research 自动喂 Plan
 subtitle: 闭合 research → plan 回路，减少 Stage1 人工编辑
 version: 0.1
 date: 2026-08-21
-status: draft
+status: implemented
 tags: [devflow, rfc, v0.4, research, plan]
 related:
   - ./rfc-v0.4.2-research-cache.md
+  - ./release-notes-v0.4.3.md
   - ../PR_DESCRIPTION_V0.4_RESEARCH.md
 ---
 
@@ -16,7 +17,7 @@ related:
 > **投入**：1.5-2 天
 > **价值**：闭合 research → plan 回路，减少 Stage1 brainstorm 阶段的人工编辑工作量
 > **依赖**：v0.4.2 缓存（可选）+ **零 LLM 依赖**
-> **状态**：draft
+> **状态**：✅ **已落地**（v0.4.3 实装完成）
 
 ---
 
@@ -586,4 +587,4 @@ T4 (0.5 天): 文档 + CHANGELOG + release notes
 
 ---
 
-**RFC v0.4.3 · 2026-08-21 · draft · 等待评审**
+**RFC v0.4.3 · 2026-08-21 · ✅ 已落地 · 见 release-notes-v0.4.3.md**

@@ -117,6 +117,10 @@ class ResearchConfig(BaseModel):
     cache: "ResearchCacheConfig" = Field(
         default_factory=lambda: ResearchCacheConfig()
     )
+    # v0.4.3 RFC §6.2: research 自动喂 plan (GoalsExtractor + SpecAutoFiller)
+    auto_fill_goals: "ResearchAutoFillGoalsConfig" = Field(
+        default_factory=lambda: ResearchAutoFillGoalsConfig()
+    )
 
 
 class ResearchCacheConfig(BaseModel):
@@ -131,6 +135,19 @@ class ResearchCacheConfig(BaseModel):
     enabled: bool = True
     ttl_seconds: int = Field(default=86400, ge=60, le=2592000)  # 1min ~ 30d
     shared_across_specs: bool = True
+
+
+class ResearchAutoFillGoalsConfig(BaseModel):
+    """v0.4.3 RFC §6.2: research 自动喂 plan 的 SOP 配置
+
+    字段语义:
+    - enabled: 总开关; false 时 plan 阶段不自动填充 goals
+    - max_goals: 最多生成几个 goals (防撑爆)
+    - overwrite_existing: True=总是覆盖; False=仅占位时覆盖 (默认)
+    """
+    enabled: bool = True
+    max_goals: int = Field(default=5, ge=1, le=20)
+    overwrite_existing: bool = False  # 默认仅覆盖占位(不破坏用户内容)
 
 
 class SOPConfig(BaseModel):

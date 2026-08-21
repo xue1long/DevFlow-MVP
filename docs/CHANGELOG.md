@@ -7,6 +7,27 @@
 ## [Unreleased]
 
 ### Added
+- **v0.4.3 research 自动喂 plan（2026-08-21）**：
+  - 新建 `src/devflow/engine/goals_extractor.py`：`GoalsExtractor` 类（结构化提取，无 LLM 依赖）
+    - SourceType 模板（PYPI/NPM/CRATES/GITHUB/WEB）+ URL regex 提取
+    - trust_level 排序 + goal 主语去重 + max_goals 截断
+  - 新建 `src/devflow/engine/spec_auto_filler.py`：`SpecAutoFiller` 类
+    - **关键纪律**：默认仅覆盖占位（`["待补充"]` / `TBD` / `TODO` / `to be filled`）
+    - `overwrite=True` 时强制覆盖（CLI/SOP 可选）
+  - 新建 `src/devflow/policy/loader.py::ResearchAutoFillGoalsConfig`（`enabled` / `max_goals` / `overwrite_existing`，默认仅覆盖占位）
+  - CLI `devflow plan` 新增 `--no-auto-fill-goals` 选项
+  - CLI `devflow plan` 在 `_run_research` 成功后自动调用 `_maybe_auto_fill_goals`
+  - `[INFO]` stderr echo 提示用户 goals 已被自动填充
+  - 3 份 SOP 文件统一加 `research.auto_fill_goals` 段（`sop.yaml` / `config/sop.default.yaml` / `cli.py` 内嵌兜底）
+  - 测试：235 passed + 1 skipped
+    - `tests/test_goals_extractor.py` 13 个（URL 提取 + trust 排序 + 去重 + max_goals 限制 + 边界）
+    - `tests/test_spec_auto_filler.py` 8 个（覆盖占位 / 保留用户内容 / overwrite 强制覆盖 / 缺失 spec / 占位符变体）
+    - `tests/test_research_cli_integration.py` +1（`--no-auto-fill-goals` flag）
+  - 文档：`docs/release-notes-v0.4.3.md` 新增；`docs/rfc-v0.4.3-auto-fill-goals.md` 状态升级
+  - **关键纪律**：不调 LLM（保持纪律引擎定位，LLM 留 v0.5 单独 RFC）
+  - **dogfooding 顺手验证 v0.4.2 B2 修复**（`_maybe_auto_research` 在 `next_phase` 自动跑 research）
+
+### Added
 - **v0.4.2 research 24h 缓存（2026-08-21）**：
   - 新建 `src/devflow/engine/research_cache.py`：`ResearchCache` 类（`make_key` / `get` / `put` / `clear` / `stats`）
   - 新建 `src/devflow/model/research.py::CacheEntry` Pydantic 模型（含 `is_expired` / `age_seconds`）

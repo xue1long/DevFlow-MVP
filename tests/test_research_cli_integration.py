@@ -276,6 +276,19 @@ sop:
         # query 取自 spec.problem
         assert "test problem statement" in kwargs["query"]
 
+    def test_plan_no_auto_fill_goals_flag(self, runner, workspace):
+        """v0.4.3: --no-auto-fill-goals 阻止自动填充"""
+        mock_result = {"ok": True, "report_path": "x", "citations_count": 5,
+                       "sources_used": [], "sources_failed": [],
+                       "fallback_used": False, "message": "ok", "citations": []}
+        with patch("devflow.cli._run_research", return_value=mock_result), \
+             patch("devflow.cli._maybe_auto_fill_goals") as mock_fill:
+            result = runner.invoke(app, [
+                "plan", "--with-research", "--no-auto-fill-goals",
+            ])
+        # _maybe_auto_fill_goals 不应被调用
+        mock_fill.assert_not_called()
+
     def test_plan_auto_run_on_in_sop(self, runner, tmp_path, monkeypatch):
         """SOP 配 auto_run_on=[plan_stage] → plan 自动跑 research"""
         monkeypatch.chdir(tmp_path)

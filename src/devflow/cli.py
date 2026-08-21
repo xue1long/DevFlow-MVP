@@ -157,7 +157,7 @@ def init():
   tooling: {test_runner: "pytest", import_mode: "importlib", proxy_strip: true, command_timeout: 120}
   storage: {backend: fs, specs_dir: docs/devflow/specs, plans_dir: docs/devflow/plans, ledger: docs/devflow/progress.yaml, glossary: CONTEXT.md, content_address: false}
   allow_fast_forward: false
-  research: {enabled: true, auto_run_on: [plan_stage], sources: [github, pypi, npm, web], max_results_per_source: 5, max_total_chars: 8000, timeout_per_source: 10, fallback: skip, citation_required: true, cache: {enabled: true, ttl_seconds: 86400, shared_across_specs: true}}
+  research: {enabled: true, auto_run_on: [plan_stage], sources: [github, pypi, npm, web], max_results_per_source: 5, max_total_chars: 8000, timeout_per_source: 10, fallback: skip, citation_required: true, cache: {enabled: true, ttl_seconds: 86400, shared_across_specs: true}, auto_fill_goals: {enabled: true, max_goals: 5, overwrite_existing: false}}
 """
     storage.init_workspace(sop_content)
     # v0.3.4: init 输出清单从 storage.layout 取（与真实路径一致）
@@ -473,19 +473,24 @@ def plan(
         False, "--with-research",
         help="plan 阶段自动跑调研(从当前 Spec.problem 抽取关键词)",
     ),
+    no_auto_fill_goals: bool = typer.Option(
+        False, "--no-auto-fill-goals",
+        help="v0.4.3: 即使 research 完成也不自动填充 goals",
+    ),
 ):
     """创建计划（Stage2 plan 阶段）"""
     machine, storage, config = _get_machine()
 
     # v0.4: --with-research 钩子(显式)或 sop.research.auto_run_on=[plan_stage](隐式)
     should_research = with_research or config.is_research_auto_run(2)
+    research_result = None
     if should_research and config.research.enabled:
         spec_id = storage.get_current_spec_id()
         spec_data = storage.read_spec(spec_id) if spec_id else None
         if spec_id and spec_data:
             problem = spec_data.get("problem", "")[:100]
             if problem:
-                _run_research(
+                research_result = _run_research(
                     query=problem,
                     spec_id=spec_id,
                     storage=storage,
@@ -493,8 +498,118 @@ def plan(
                     emit_echo=False,
                 )
 
+    # v0.4.3: research 完成后自动填充 goals 草稿
+    # 默认仅覆盖占位 ['待补充'], 不破坏用户已有内容
+    auto_fill_cfg = config.config.auto_fill_goals
+    if (
+        research_result
+        and research_result.get("ok")
+        and research_result.get("citations_count", 0) > 0
+        and auto_fill_cfg.enabled
+        and not no_auto_fill_goals
+    ):
+        _maybe_auto_fill_goals(
+            storage=storage,
+            spec_id=storage.get_current_spec_id(),
+            config=config,
+            auto_fill_cfg=auto_fill_cfg,
+        )
+
     result = machine.create_plan(tasks)
     _output(result)
+
+
+def _maybe_auto_fill_goals(
+    storage: StorageBackend,
+    spec_id: Optional[str],
+    config,
+    auto_fill_cfg,
+) -> Optional[dict]:
+    """v0.4.3 RFC §6.3: research 报告 -> goals 草稿
+
+    流程:
+      1. 读最近一次 research 报告 (Markdown 解析 citations)
+      2. GoalsExtractor.extract() -> list[str]
+      3. SpecAutoFiller.fill_goals_if_empty() -> 写 spec.yaml
+
+    Returns:
+        dict 含 changed/original/filled, None 表示未触发或失败
+    """
+    if not spec_id:
+        return None
+    from pathlib import Path
+    from .engine.goals_extractor import GoalsExtractor
+    from .engine.spec_auto_filler import SpecAutoFiller
+    from .model.research import ResearchReport, Citation, SourceType, TrustLevel
+
+    # 找最近一次 research 报告(简化: 读最新的 .md 文件)
+    # 通过 storage 拿 root(StorageBackend ABC)
+    storage_root = Path(storage.root)
+    research_dir = storage_root / "docs" / "devflow" / "research"
+    if not research_dir.exists():
+        return None
+    md_files = sorted(research_dir.glob(f"{spec_id}-*.md"), reverse=True)
+    if not md_files:
+        return None
+
+    md_path = md_files[0]
+    md_content = md_path.read_text(encoding="utf-8")
+
+    # 简易 Markdown 解析: 提取 ### [N] <title> 段落的 URL / source / trust
+    # (与 to_markdown 输出格式对齐)
+    import re
+    citations: list[Citation] = []
+    pattern = re.compile(
+        r"### \[\d+\] (?P<title>.+?)\n\n"
+        r"- \*\*URL\*\*: <(?P<url>[^>]+)>\n"
+        r"- \*\*Source\*\*: `(?P<source>[^`]+)`\n"
+        r"- \*\*Trust\*\*: `(?P<trust>[^`]+)`",
+        re.MULTILINE,
+    )
+    for m in pattern.finditer(md_content):
+        try:
+            src = SourceType(m.group("source"))
+            trust = TrustLevel(m.group("trust"))
+        except ValueError:
+            continue
+        citations.append(Citation(
+            url=m.group("url").strip(),
+            title=m.group("title").strip(),
+            snippet="",  # snippet 不在 ### 段, 用空
+            source_type=src,
+            trust_level=trust,
+        ))
+
+    if not citations:
+        return None
+
+    # 提取 goals
+    goals = GoalsExtractor().extract(
+        ResearchReport(
+            spec_id=spec_id,
+            query=md_path.stem,
+            citations=citations,
+        ),
+        max_goals=auto_fill_cfg.max_goals,
+    )
+
+    # 填充 Spec
+    result = SpecAutoFiller(storage).fill_goals_if_empty(
+        spec_id, goals,
+        overwrite=auto_fill_cfg.overwrite_existing,
+    )
+
+    if result is not None and result.changed:
+        try:
+            import typer
+            typer.echo(
+                f"[INFO] 已自动填充 goals ({len(goals)} 个),"
+                f" 请 review 后 devflow approve",
+                err=True,
+            )
+        except Exception:
+            pass
+    return result.model_dump() if result else None
 
 
 # --- v0.4 RFC §7.1: research 命令 ---

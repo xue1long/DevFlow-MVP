@@ -96,3 +96,8 @@ sop:
       enabled: true
       ttl_seconds: 86400
       shared_across_specs: true
+    # v0.4.3: research 自动喂 plan(结构化提取,不调 LLM)
+    auto_fill_goals:
+      enabled: true
+      max_goals: 5
+      overwrite_existing: false  # 默认仅覆盖占位,不破坏用户内容

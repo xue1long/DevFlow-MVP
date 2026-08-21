@@ -171,6 +171,22 @@ devflow research --clear-cache              # 清全部
 devflow research "python retry" --clear-cache  # 清单个
 ```
 
+**v0.4.3 自动 goals 草稿**：plan 阶段跑完 research 后，自动从报告提取 goals 填充到 `Spec.goals`：
+
+```bash
+# 默认行为: 仅覆盖占位 ['待补充'], 用户已填的 goals 不动
+devflow plan  # 自动填充 + [INFO] 提示
+
+# 强制禁用 (本次 plan 不填充)
+devflow plan --no-auto-fill-goals
+```
+
+提取规则（结构化，零 LLM）：
+- PyPI/npm/crates: URL regex 提取包名
+- GitHub: 仓库名 + stars
+- Web: title fallback
+- 按 trust_level 排序 + 同名去重 + max_goals 限制
+
 ### 双轴评审（v0.2）
 - **Standards 轴**：自动检查（huge_pr / no_test / cross_module_import / 等 6 条规则）
 - **Spec 轴**：自动检查（goal 覆盖 + contract 缺失 + 占位 goals 提示）
