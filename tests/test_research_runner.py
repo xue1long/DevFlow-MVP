@@ -621,6 +621,149 @@ class TestPathAndSummary:
         spec_data = storage.read_spec("20260819-test")
         assert len(spec_data["research_refs"]) == 2
 
+    # --- v0.4.2 cache 集成测试 ---
+
+    def test_cache_hit_reuses_report_without_backend(self, tmp_path):
+        """v0.4.2: 二次同 query 命中缓存, 不调 backend"""
+        from datetime import datetime, timedelta, timezone
+        from devflow.engine.research_cache import ResearchCache
+        from devflow.model.research import CacheEntry
+
+        cache = ResearchCache(
+            tmp_path / "docs" / "devflow" / "research" / ".cache",
+        )
+        # 预置缓存条目
+        cache.put(CacheEntry(
+            key=cache.make_key("test query", ["github", "web"], 5),
+            query="test query",
+            sources=["github", "web"],
+            max_results_per_source=5,
+            spec_id="20260819-test",
+            report_path="docs/devflow/research/20260819-test-cached.md",
+            citations_count=7,
+            backend_chain=["registry"],
+            created_at=datetime.now(timezone.utc),
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+        ))
+
+        with patch(
+            "devflow.engine.research_runner.select_backends"
+        ) as mock_select:
+            runner, storage, _ = _make_runner(tmp_path, [])
+            result = runner.run("test query", spec_id="20260819-test")
+
+        # select_backends 根本不应被调用
+        mock_select.assert_not_called()
+        assert result["ok"] is True
+        assert result["cache_hit"] is True
+        assert result["citations_count"] == 7
+        assert result["cache_age_seconds"] >= 0
+        assert "cache 命中" in result["message"]
+
+    def test_cache_disabled_runs_backends(self, tmp_path):
+        """v0.4.2: cache.enabled=false → 每次都跑 backend"""
+        backends = [FakeBackend("github", SourceType.GITHUB, [
+            _make_citation(url="https://github.com/x/y"),
+        ])]
+        with patch(
+            "devflow.engine.research_runner.select_backends",
+            return_value=backends,
+        ):
+            runner, _, _ = _make_runner(
+                tmp_path, backends,
+                config_overrides={
+                    "cache": {"enabled": False, "ttl_seconds": 86400},
+                },
+            )
+            result = runner.run("test", spec_id="20260819-test")
+
+        assert result["ok"] is True
+        assert result["cache_hit"] is False
+        # 没调 backend? 错了 — cache 禁用应调
+        assert result["backends_used"] == ["github"]
+
+    def test_cache_expired_triggers_rerun(self, tmp_path):
+        """v0.4.2: cache 过期 → 重新调 backend"""
+        from datetime import datetime, timedelta, timezone
+        from devflow.engine.research_cache import ResearchCache
+        from devflow.model.research import CacheEntry
+
+        cache = ResearchCache(
+            tmp_path / "docs" / "devflow" / "research" / ".cache",
+        )
+        # 预置已过期条目
+        cache.put(CacheEntry(
+            key=cache.make_key("test", ["github"], 5),
+            query="test",
+            sources=["github"],
+            max_results_per_source=5,
+            spec_id="20260819-test",
+            report_path="old.md",
+            citations_count=0,
+            backend_chain=["github"],
+            created_at=datetime.now(timezone.utc) - timedelta(hours=25),
+            expires_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        ))
+
+        # 预置新 backend 应被调用
+        backends = [FakeBackend("github", SourceType.GITHUB, [
+            _make_citation(url="https://github.com/fresh"),
+        ])]
+        with patch(
+            "devflow.engine.research_runner.select_backends",
+            return_value=backends,
+        ):
+            runner, _, _ = _make_runner(tmp_path, backends)
+            result = runner.run("test", spec_id="20260819-test")
+
+        # 过期 → 重新跑 (backends_used 应有 github)
+        assert result["cache_hit"] is False
+        assert result["backends_used"] == ["github"]
+        assert result["citations_count"] == 1
+
+    def test_cache_hit_still_writes_ledger_and_spec(self, tmp_path):
+        """v0.4.2: 缓存命中仍追加 research_refs + 写账本(审计追溯完整性)"""
+        from datetime import datetime, timedelta, timezone
+        from devflow.engine.research_cache import ResearchCache
+        from devflow.model.research import CacheEntry
+
+        cache = ResearchCache(
+            tmp_path / "docs" / "devflow" / "research" / ".cache",
+        )
+        # 用 SOP 默认 sources (test fixture 默认 sources=["github","web"])
+        cache.put(CacheEntry(
+            key=cache.make_key("test", ["github", "web"], 5),
+            query="test",
+            sources=["github", "web"],
+            max_results_per_source=5,
+            spec_id="20260819-test",
+            report_path="docs/devflow/research/test-cached.md",
+            citations_count=3,
+            backend_chain=["github"],
+            created_at=datetime.now(timezone.utc),
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+        ))
+
+        with patch(
+            "devflow.engine.research_runner.select_backends",
+            return_value=[FakeBackend("github", SourceType.GITHUB, [])],
+        ):
+            runner, storage, _ = _make_runner(tmp_path, [])
+            result = runner.run("test", spec_id="20260819-test")
+
+        assert result["cache_hit"] is True
+        # Spec.research_refs 仍追加(标记 cache_hit=true)
+        spec_data = storage.read_spec("20260819-test")
+        last_ref = spec_data["research_refs"][-1]
+        assert last_ref["cache_hit"] is True
+        # 账本仍写
+        entries = [
+            e for e in storage.get_ledger()["entries"]
+            if e.get("action") == "research"
+        ]
+        assert len(entries) >= 1
+        assert "cache_hit=true" in entries[-1]["details"]
+
     def test_backend_non_list_return_raises_type_error(self, tmp_path):
         """v0.4.1: backend 返回非 list 应抛 TypeError (TRY004 ruff)"""
         class WeirdBackend:

@@ -113,6 +113,24 @@ class ResearchConfig(BaseModel):
             "from scratch", "重新实现", "重写", "造轮子", "自己写一个",
         ]
     )
+    # v0.4.2 RFC §6.1: 24h 同 query 复用本地缓存
+    cache: "ResearchCacheConfig" = Field(
+        default_factory=lambda: ResearchCacheConfig()
+    )
+
+
+class ResearchCacheConfig(BaseModel):
+    """v0.4.2 RFC §6.1: research 缓存 SOP 配置
+
+    字段语义:
+    - enabled: 总开关
+    - ttl_seconds: 缓存有效期(秒); 默认 24h (86400)
+    - shared_across_specs: True=跨 Spec 共享(简化, 高价值);
+      False=每 Spec 独立 key(隔离, v0.5+ 按需开启)
+    """
+    enabled: bool = True
+    ttl_seconds: int = Field(default=86400, ge=60, le=2592000)  # 1min ~ 30d
+    shared_across_specs: bool = True
 
 
 class SOPConfig(BaseModel):

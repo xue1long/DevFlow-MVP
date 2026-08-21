@@ -91,3 +91,8 @@ sop:
       - "重写"
       - "造轮子"
       - "自己写一个"
+    # v0.4.2: 24h 同 query 复用(dogfooding 发现 SOP 三份不一致,统一补全)
+    cache:
+      enabled: true
+      ttl_seconds: 86400
+      shared_across_specs: true

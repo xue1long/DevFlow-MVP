@@ -35,6 +35,7 @@ from ..adapters.research import (
 )
 from ..model.ledger import LedgerAction, LedgerEntry
 from ..model.research import (
+    CacheEntry,
     Citation,
     ResearchQuery,
     ResearchReport,
@@ -57,6 +58,18 @@ class ResearchRunner:
         self.storage = storage
         self.config = config
         self.workspace_root = Path(workspace_root)
+        # v0.4.2: 缓存层(若 SOP 关闭则传 ttl=0,所有条目视为过期)
+        from .research_cache import ResearchCache
+        cache_ttl = (
+            self.config.cache.ttl_seconds
+            if self.config.cache.enabled
+            else 0
+        )
+        self.cache = ResearchCache(
+            cache_dir=self.workspace_root
+            / "docs" / "devflow" / "research" / ".cache",
+            ttl_seconds=cache_ttl,
+        )
 
     def run(
         self,
@@ -85,6 +98,9 @@ class ResearchRunner:
               - citations: 引用列表(供 CLI 输出)
               - sources_used: deprecated,保留向后兼容(== backends_used 转 source_type)
               - sources_failed: deprecated,保留向后兼容(== backends_failed)
+              - cache_hit: v0.4.2,True 表示来自本地缓存
+              - cache_age_seconds: v0.4.2,缓存命中时距 created_at 秒数
+              - cache_key: v0.4.2,缓存键(无论命中与否都返回,便于调试)
         """
         # 1. 构造 ResearchQuery
         resolved_sources = (
@@ -100,6 +116,20 @@ class ResearchRunner:
             timeout_per_source=self.config.timeout_per_source,
             spec_id=spec_id,
         )
+
+        # v0.4.2: 缓存 lookup (优先级最高, 命中后跳过 select_backends)
+        cache_key = self.cache.make_key(
+            query,
+            [s.value for s in resolved_sources],
+            self.config.max_results_per_source,
+        )
+        if self.config.cache.enabled:
+            cached = self.cache.get(cache_key)
+            if cached is not None:
+                # 命中:复用 metadata, 不调 backend
+                return self._build_cache_hit_result(
+                    cached, spec_id, cache_key,
+                )
 
         # 2. 选择 backend 链(含 health_check)
         backends = select_backends(
@@ -194,6 +224,12 @@ class ResearchRunner:
             backends_empty=backends_empty,
         )
 
+        # v0.4.2: 写缓存(下次同 query 可命中)
+        self._write_cache(
+            cache_key, query, resolved_sources, backend_chain,
+            report, report_path,
+        )
+
         return {
             "ok": True,
             "report_path": self._relpath(report_path),
@@ -204,6 +240,10 @@ class ResearchRunner:
             "backends_empty": backends_empty,
             "sources_in_results": sources_in_results,
             "fallback_used": fallback_used,
+            # v0.4.2 新字段
+            "cache_hit": False,
+            "cache_age_seconds": 0,
+            "cache_key": cache_key,
             "message": (
                 f"调研完成,{len(trimmed)} 条引用"
                 + (" (fallback 已触发)" if fallback_used else "")
@@ -368,6 +408,139 @@ class ResearchRunner:
             out.append(c)
             total += size
         return out, total
+
+    # ---- v0.4.2: cache 集成 ----
+
+    def _write_cache(
+        self,
+        cache_key: str,
+        query: str,
+        sources: list[SourceType],
+        backend_chain: list[str],
+        report: ResearchReport,
+        report_path: Path,
+    ) -> None:
+        """v0.4.2: 调研完成后写缓存条目
+
+        仅在 cache.enabled=True 时调用. 写完后供下次同 query 命中.
+        """
+        from datetime import timedelta
+        try:
+            self.cache.put(CacheEntry(
+                key=cache_key,
+                query=query,
+                sources=[s.value for s in sources],
+                max_results_per_source=self.config.max_results_per_source,
+                spec_id=report.spec_id,
+                report_path=self._relpath(report_path),
+                citations_count=len(report.citations),
+                backend_chain=backend_chain,
+                created_at=datetime.now(timezone.utc),
+                expires_at=datetime.now(timezone.utc)
+                    + timedelta(seconds=self.config.cache.ttl_seconds),
+            ))
+        except Exception:
+            # 缓存写失败不阻断主流程
+            pass
+
+    def _build_cache_hit_result(
+        self,
+        cached: CacheEntry,
+        current_spec_id: str,
+        cache_key: str,
+    ) -> dict:
+        """v0.4.2: 缓存命中返回结果(复用报告 metadata, 不调 backend)
+
+        仍追加 Spec.research_refs + 写账本(审计追溯完整性)
+        """
+        # 复用报告:仍需追加 research_refs 让审计追溯完整
+        try:
+            self._update_spec_from_cache(current_spec_id, cached)
+        except Exception:
+            pass
+        try:
+            self._append_cache_hit_ledger(current_spec_id, cached, cache_key)
+        except Exception:
+            pass
+
+        return {
+            "ok": True,
+            "report_path": cached.report_path,
+            "citations_count": cached.citations_count,
+            # v0.4.2 新字段
+            "cache_hit": True,
+            "cache_age_seconds": cached.age_seconds(),
+            "cache_key": cache_key,
+            # v0.4.1 字段(命中时无 backend 实际跑,填空)
+            "backends_used": cached.backend_chain,
+            "backends_failed": [],
+            "backends_empty": [],
+            "sources_in_results": cached.sources,
+            "fallback_used": False,  # 命中不视为 fallback
+            "message": (
+                f"调研完成 (cache 命中, {cached.age_seconds()}s 前),"
+                f" {cached.citations_count} 条引用"
+            ),
+            "citations": [],  # 不重复传 citations(避免 JSON 膨胀)
+            # deprecated 字段
+            "sources_used": cached.sources,
+            "sources_failed": [],
+        }
+
+    def _update_spec_from_cache(
+        self,
+        spec_id: str,
+        cached: CacheEntry,
+    ) -> None:
+        """v0.4.2: 缓存命中时仍追加 Spec.research_refs(标记 cache_hit)"""
+        from ..model.spec import Spec
+        spec_data = self.storage.read_spec(spec_id)
+        if spec_data is None:
+            return
+        try:
+            spec = Spec(**spec_data)
+        except Exception:
+            return
+        # 标记 trust=unknown(没看 citations 无法判定)
+        spec.research_refs.append({
+            "path": cached.report_path,
+            "summary": "(cache 复用, 无新增 summary)",
+            "backends_used": cached.backend_chain,
+            "sources_in_results": cached.sources,
+            "trust_level": "unknown",
+            "generated_at": cached.created_at.isoformat(),
+            "citations_count": cached.citations_count,
+            "cache_hit": True,        # v0.4.2 标记
+        })
+        try:
+            self.storage.write_spec(
+                spec_id, spec.model_dump(mode="json")
+            )
+        except Exception:
+            pass
+
+    def _append_cache_hit_ledger(
+        self,
+        spec_id: str,
+        cached: CacheEntry,
+        cache_key: str,
+    ) -> None:
+        """v0.4.2: 缓存命中写账本(action=research, 标记 cache_hit=true)"""
+        from ..model.ledger import LedgerEntry, LedgerAction
+        details = (
+            f"cache_hit=true age={cached.age_seconds()}s "
+            f"key={cache_key} "
+            f"citations={cached.citations_count}"
+        )
+        try:
+            self.storage.append_ledger(LedgerEntry(
+                phase=2,
+                action=LedgerAction.RESEARCH,
+                spec_id=spec_id,
+                details=details,
+            ))
+        except Exception:
+            pass
 
     def _write_report(self, report: ResearchReport) -> Path:
         """落盘 Markdown 报告"""

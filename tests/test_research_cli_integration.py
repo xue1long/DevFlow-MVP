@@ -167,6 +167,40 @@ sop:
         assert result.exit_code == 1
         assert "无效" in result.stdout
 
+    def test_research_clear_cache_all(self, runner, workspace):
+        """v0.4.2: --clear-cache 不带 query → 清全部"""
+        with patch(
+            "devflow.engine.research_cache.ResearchCache.clear",
+            return_value=3,
+        ) as mock_clear, patch(
+            "devflow.engine.research_cache.ResearchCache.stats",
+            return_value={"total_entries": 0, "total_bytes": 0,
+                          "ttl_seconds": 86400, "cache_dir": "/tmp/.cache"},
+        ):
+            result = runner.invoke(app, ["research", "--clear-cache"])
+        assert result.exit_code == 0
+        assert '"ok": true' in result.stdout.lower() or '"ok": True' in result.stdout
+        assert "cleared_entries" in result.stdout
+        assert "已清缓存" in result.stdout or "3" in result.stdout
+
+    def test_research_clear_cache_single(self, runner, workspace):
+        """v0.4.2: --clear-cache 带 query → 清单个"""
+        with patch(
+            "devflow.engine.research_cache.ResearchCache.clear",
+            return_value=1,
+        ) as mock_clear, patch(
+            "devflow.engine.research_cache.ResearchCache.stats",
+            return_value={"total_entries": 0, "total_bytes": 0,
+                          "ttl_seconds": 86400, "cache_dir": "/tmp/.cache"},
+        ):
+            result = runner.invoke(app, [
+                "research", "python retry", "--clear-cache",
+            ])
+        assert result.exit_code == 0
+        # mock_clear 被以 key=... 调用(非 None)
+        call_args = mock_clear.call_args
+        assert call_args.kwargs.get("key") is not None
+
     def test_research_sources_parsed(self, runner, workspace):
         """逗号分隔的 sources 被正确解析"""
         mock_result = {"ok": True, "report_path": "x", "citations_count": 0,

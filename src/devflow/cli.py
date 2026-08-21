@@ -157,7 +157,7 @@ def init():
   tooling: {test_runner: "pytest", import_mode: "importlib", proxy_strip: true, command_timeout: 120}
   storage: {backend: fs, specs_dir: docs/devflow/specs, plans_dir: docs/devflow/plans, ledger: docs/devflow/progress.yaml, glossary: CONTEXT.md, content_address: false}
   allow_fast_forward: false
-  research: {enabled: true, auto_run_on: [plan_stage], sources: [github, pypi, npm, web], max_results_per_source: 5, max_total_chars: 8000, timeout_per_source: 10, fallback: skip, citation_required: true}
+  research: {enabled: true, auto_run_on: [plan_stage], sources: [github, pypi, npm, web], max_results_per_source: 5, max_total_chars: 8000, timeout_per_source: 10, fallback: skip, citation_required: true, cache: {enabled: true, ttl_seconds: 86400, shared_across_specs: true}}
 """
     storage.init_workspace(sop_content)
     # v0.3.4: init 输出清单从 storage.layout 取（与真实路径一致）
@@ -549,7 +549,9 @@ def _run_research(
 
 @app.command()
 def research(
-    query: str = typer.Argument(..., help="调研关键词"),
+    query: str = typer.Argument(
+        "", help="调研关键词(v0.4.2 --clear-cache 时可省略)",
+    ),
     spec_id: Optional[str] = typer.Option(
         None, "--spec-id", "-s",
         help="关联 Spec(默认取当前活跃 Spec)",
@@ -562,12 +564,45 @@ def research(
         5, "--max-results", "-n",
         help="单源最大返回数(1-20)",
     ),
+    clear_cache: bool = typer.Option(
+        False, "--clear-cache",
+        help="v0.4.2:清缓存(query 为空清全部,否则清该 query)",
+    ),
+    no_cache: bool = typer.Option(
+        False, "--no-cache",
+        help="v0.4.2:禁用本次查询的缓存(强制调 backend)",
+    ),
 ):
     """执行引文式调研,产出带引用的 Markdown
 
     v0.4 RFC §7.1:辅助需求草稿 + plan 阶段,验证是否已有成熟方案。
     """
     machine, storage, config = _get_machine()
+
+    # v0.4.2: --clear-cache 早返回(不需要 spec_id)
+    if clear_cache:
+        from .engine.research_runner import ResearchRunner
+        runner = ResearchRunner(
+            storage=storage,
+            config=config.research,
+            workspace_root=_get_root(),
+        )
+        # query 为空 → 清全部;否则清单个
+        from .model.research import SourceType as ST
+        src_list = [ST(s.strip()) for s in sources.split(",") if s.strip()]
+        cache_key = (
+            runner.cache.make_key(
+                query, [s.value for s in src_list], max_results,
+            ) if query else None
+        )
+        cleared = runner.cache.clear(key=cache_key)
+        _output({
+            "ok": True,
+            "message": f"已清缓存 ({cleared} 条)",
+            "cleared_entries": cleared,
+            "stats": runner.cache.stats(),
+        })
+        return
 
     # 解析 spec_id
     target_spec_id = spec_id or storage.get_current_spec_id()

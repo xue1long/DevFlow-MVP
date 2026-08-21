@@ -833,6 +833,10 @@ class PhaseStateMachine:
     # --- Task 状态推进 ---
 
     def _advance_tasks_for_phase(self, phase: int) -> None:
+        # v0.4.2 fix (post-v0.4-dogfooding): 进入 plan阶段时若 SOP
+        # research.auto_run_on 包含该阶段, 自动跑 research (无需 CLI 显式触发)
+        self._maybe_auto_research(phase)
+
         plan_id = self.storage.get_current_plan_id()
         if plan_id is None:
             return
@@ -988,3 +992,58 @@ class PhaseStateMachine:
         except Exception:
             # 非交互环境(测试)静默
             pass
+
+    def _maybe_auto_research(self, phase: int) -> None:
+        """v0.4.2 fix: 进入 plan 阶段时若 SOP research.auto_run_on 包含,
+        自动跑 research (dogfooding 发现: 此前只在 devflow plan 命令触发,
+        而非 state_machine 阶段推进,造成 SOP 配 auto_run_on=[plan_stage]
+        但 next 不自动跑的语义不一致)
+
+        行为:
+        - research.enabled=false → 跳过
+        - stage 不在 auto_run_on → 跳过
+        - 无活跃 spec_id → 跳过
+        - spec.problem 为空 → 跳过(用户还没编辑 spec)
+        - 失败 → 静默,不阻断 (CLI plan 命令兜底)
+        """
+        if not self.config.research.enabled:
+            return
+        if not self.config.is_research_auto_run(phase):
+            return
+
+        spec_id = self.storage.get_current_spec_id()
+        if not spec_id:
+            return
+        spec_data = self.storage.read_spec(spec_id)
+        if not spec_data:
+            return
+
+        problem = (spec_data.get("problem") or "")[:100].strip()
+        if not problem:
+            return
+
+        # 推迟 import 避免循环依赖
+        try:
+            from ..engine.research_runner import ResearchRunner
+            runner = ResearchRunner(
+                storage=self.storage,
+                config=self.config.research,
+                workspace_root=self.storage.root,
+            )
+            from ..model.research import SourceType
+            sources = [SourceType(s) for s in self.config.research.sources]
+            runner.run(
+                query=problem,
+                spec_id=spec_id,
+                sources=sources,
+            )
+        except Exception as e:
+            # 不阻断 plan 阶段推进;失败走 fallback=skip
+            try:
+                import typer
+                typer.echo(
+                    f"[research auto_run] 跳过(异常): {e}",
+                    err=True,
+                )
+            except Exception:
+                pass

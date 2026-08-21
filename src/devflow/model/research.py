@@ -1,4 +1,4 @@
-"""Research — 引文式调研产物（v0.4）
+"""Research — 引文式调研产物（v0.4 + v0.4.2 缓存）
 
 RFC §3.1 数据模型。
 - SourceType: 数据源类型(GitHub/PyPI/npm/crates/web/official_docs)
@@ -6,6 +6,7 @@ RFC §3.1 数据模型。
 - Citation: 单条引用(URL + 标题 + 摘要片段 + 元数据)
 - ResearchQuery: 调研查询参数
 - ResearchReport: 调研报告(可序列化为 Markdown)
+- CacheEntry: v0.4.2 本地缓存条目(24h TTL)
 """
 from __future__ import annotations
 
@@ -164,3 +165,31 @@ class ResearchReport(BaseModel):
     def has_high_trust(self) -> bool:
         """是否包含高信任度引用(影响 spec.research_refs.trust_level 字段)"""
         return any(c.trust_level == TrustLevel.HIGH for c in self.citations)
+
+
+class CacheEntry(BaseModel):
+    """v0.4.2 RFC §3.1: 本地缓存条目
+
+    落盘为 docs/devflow/research/.cache/<key>.json
+    TTL 由 sop.yaml.research.cache.ttl_seconds 控制(默认 24h)
+    """
+    key: str = Field(..., min_length=1, description="sha256 前 16 字符")
+    query: str = Field(..., min_length=1, description="规范化后的 query")
+    sources: list[str] = Field(default_factory=list, description="数据源列表")
+    max_results_per_source: int = Field(..., ge=1)
+    spec_id: str = Field(..., description="首次创建时的 spec_id")
+    report_path: str = Field(..., description="Markdown 报告相对路径")
+    citations_count: int = Field(..., ge=0)
+    backend_chain: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+    expires_at: datetime
+
+    def is_expired(self) -> bool:
+        return datetime.now(timezone.utc) > self.expires_at
+
+    def age_seconds(self) -> int:
+        return int(
+            (datetime.now(timezone.utc) - self.created_at).total_seconds()
+        )
