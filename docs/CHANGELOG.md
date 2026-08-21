@@ -7,6 +7,25 @@
 ## [Unreleased]
 
 ### Added
+- **v0.4.2 research 24h 缓存（2026-08-21）**：
+  - 新建 `src/devflow/engine/research_cache.py`：`ResearchCache` 类（`make_key` / `get` / `put` / `clear` / `stats`）
+  - 新建 `src/devflow/model/research.py::CacheEntry` Pydantic 模型（含 `is_expired` / `age_seconds`）
+  - 新建 `src/devflow/policy/loader.py::ResearchCacheConfig`（`enabled` / `ttl_seconds` / `shared_across_specs`，默认 24h + 跨 Spec 共享）
+  - 扩展 `engine/research_runner.py`：集成 cache lookup/hit/miss/expire 逻辑，新增 `_write_cache` / `_build_cache_hit_result` / `_update_spec_from_cache` / `_append_cache_hit_ledger` 方法
+  - CLI `devflow research` 新增 `--clear-cache` / `--no-cache` 选项（query 可省略用于清单/全部）
+  - run() 返回 JSON 新增 `cache_hit` / `cache_age_seconds` / `cache_key` 字段
+  - `Spec.research_refs` 缓存命中时仍追加（标记 `cache_hit: true`，审计追溯完整性）
+  - SOP 配置扩展（`sop.yaml` / `config/sop.default.yaml` / `cli.py` 内嵌兜底）：新增 `research.cache` 段
+  - 文档：`docs/release-notes-v0.4.2.md` 新增；`docs/rfc-v0.4.2-research-cache.md` 草案保留
+  - **dogfooding 顺手修**（v0.4.2 实施期间发现）：
+    - B1: SOP 多文件一致性——3 份 SOP 文件统一补全 `research.cache` 段（`cli.py` 内嵌兜底漏段）
+    - B2: `state_machine.py::_advance_tasks_for_phase()` 加 `_maybe_auto_research()` 钩子，修复 `auto_run_on=[plan_stage]` 仅在 `devflow plan` 命令触发、不在 `next_phase` 触发的语义不一致
+  - 测试：215 passed + 1 skipped
+    - `tests/test_research_cache.py` 19 个（新文件）
+    - `tests/test_research_runner.py` +4 个 cache 集成测试
+    - `tests/test_research_cli_integration.py` +2 个 `--clear-cache` 测试
+
+### Added
 - **v0.4.0 引文式调研子能力 research（2026-08-21）**：
   - 新建 `src/devflow/model/research.py`：`SourceType` / `TrustLevel` / `Citation` / `ResearchQuery` / `ResearchReport` 5 个 Pydantic 模型 + `to_markdown()` 带引用格式
   - 新建 `src/devflow/adapters/research/` 包（4 backend + 选择器，零业务逻辑纪律）：

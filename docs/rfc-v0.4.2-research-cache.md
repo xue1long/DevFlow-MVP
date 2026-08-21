@@ -3,12 +3,13 @@ title: DevFlow RFC v0.4.2 — Research 缓存
 subtitle: 24h 同 query 复用,直接降 API 成本
 version: 0.1
 date: 2026-08-21
-status: draft
+status: implemented
 tags: [devflow, rfc, v0.4, research, cache]
 related:
   - ../PR_DESCRIPTION_V0.4_RESEARCH.md
   - ./post-v0.4-research-diagnosis.md
   - ./release-notes-v0.4.1.md
+  - ./release-notes-v0.4.2.md
 ---
 
 # RFC v0.4.2: Research 缓存（24h 同 query 复用）
@@ -17,7 +18,7 @@ related:
 > **投入**：1.5-2 天
 > **价值**：直接降 API 成本 + 离线场景友好 + 端到端耗时从 5-10s 降到 < 0.5s
 > **依赖**：无（纯本地存储）
-> **状态**：draft
+> **状态**：✅ **已落地**（v0.4.2 实装 commit `27f8d71`）
 
 ---
 
@@ -538,4 +539,4 @@ T4 (0.5 天): cli.py --clear-cache + 文档 + CHANGELOG + release notes
 
 ---
 
-**RFC v0.4.2 · 2026-08-21 · draft · 等待评审**
+**RFC v0.4.2 · 2026-08-21 · ✅ 已落地 · 见 release-notes-v0.4.2.md**

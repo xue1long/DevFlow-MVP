@@ -149,6 +149,26 @@ research:
   fallback: skip     # 离线时跳过，不阻断流程
   citation_required: true
   start_keywords: ["from scratch", "重新实现", "重写", "造轮子"]
+  # v0.4.2 新增: 24h 同 query 缓存
+  cache:
+    enabled: true
+    ttl_seconds: 86400
+    shared_across_specs: true
+```
+
+**v0.4.2 缓存**：同 query 24h 内复用报告（< 0.5s，不调 API）：
+
+```bash
+# 首次跑（5-10s,调 4 backend,写缓存）
+devflow research "python retry library"
+
+# 24h 内同 query（< 0.5s,命中缓存）
+devflow research "python retry library"
+# → cache_hit: true, cache_age_seconds: ...
+
+# 手动清缓存
+devflow research --clear-cache              # 清全部
+devflow research "python retry" --clear-cache  # 清单个
 ```
 
 ### 双轴评审（v0.2）
