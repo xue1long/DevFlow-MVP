@@ -1,7 +1,9 @@
-# v0.4.0: 引文式调研子能力 (research) — 不重复造轮子的纪律落地
+# v0.4.0 + v0.4.1: 引文式调研子能力 (research) — 不重复造轮子的纪律落地
 
 > 实现 RFC §5.3 Tier2 #12 research 子能力,辅助需求草稿 + plan 阶段决策。
-> 22 文件 / 3813 行新增 / 5 行删除 / 156 测试通过 + 1 跳过。
+> 24 文件 / 4289 行新增 / 11 行删除 / 190 测试通过 + 1 跳过。
+> **v0.4.1** 在 v0.4.0 基础上修复了真实环境诊断暴露的 3 个并发边界 bug。
+> 详见 [docs/post-v0.4-research-diagnosis.md](./docs/post-v0.4-research-diagnosis.md) 与 [docs/release-notes-v0.4.1.md](./docs/release-notes-v0.4.1.md)。
 
 ---
 

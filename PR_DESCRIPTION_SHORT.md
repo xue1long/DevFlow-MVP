@@ -1,8 +1,12 @@
-# v0.4.0: 引文式调研子能力 (research)
+# v0.4.0 + v0.4.1: 引文式调研子能力 (research)
 
 > **TL;DR**: plan 阶段能产出**带引用**的调研报告,辅助"不重复造轮子"决策。
-> 22 文件 / +4036 行 / 156 测试通过 + 1 跳过。
-> 完整版描述见 [PR_DESCRIPTION_V0.4_RESEARCH.md](./PR_DESCRIPTION_V0.4_RESEARCH.md)。
+> 24 文件 / +4289 行 / 190 测试通过 + 1 跳过。
+> **v0.4.1** 在 v0.4.0 基础上修复了 3 个真实环境诊断出的并发边界 bug。
+>
+> 完整版描述: [PR_DESCRIPTION_V0.4_RESEARCH.md](./PR_DESCRIPTION_V0.4_RESEARCH.md)
+> Release notes: [docs/release-notes-v0.4.1.md](./docs/release-notes-v0.4.1.md)
+> 诊断报告: [docs/post-v0.4-research-diagnosis.md](./docs/post-v0.4-research-diagnosis.md)
 
 ---
 
@@ -142,6 +146,26 @@ $ devflow research "python retry library"
 - LLM 自动生成 research summary
 - 调研缓存(同 query 24h 内复用)
 - `devflow audit` 检查 plan.task 是否用了调研中提到的库
+
+## 🐛 v0.4.1 关键修复(commits `0ef9f3c` + `f2e8cbf`)
+
+通过 `scripts/diagnose_research.py` 真实环境诊断发现:
+
+| Bug | 严重度 | 修复 |
+|---|---|---|
+| `sources_used` 与 `sources_failed` 互相矛盾 | 中 | 改为 backend 名字维度 + 新增 `backends_empty` + `sources_in_results` |
+| `_safe_search` 把异常吞成 `[]`, 失去诊断信号 | 中 | 不再吞异常, 重新抛出由 runner 兜底 |
+| CLI `--spec-id nonexistent` 静默失败 | 中 | 加 `read_spec` 校验, 返回 `ok=False` |
+| `datetime.now()` 没带 tz (DTZ005) | 低 | 加 `timezone.utc` |
+| `RuntimeError` 用作类型错误 (TRY004) | 低 | 改 `TypeError` |
+
+详见 [`docs/post-v0.4-research-diagnosis.md`](./docs/post-v0.4-research-diagnosis.md)。
+
+---
+
+**Refs**: 架构 §5.3 Tier2 #12 research
+**Branch**: `feat/v0.4-research`
+**Test**: `pytest tests/test_research_*.py -v` → 190 passed + 1 skipped
 
 ---
 
