@@ -25,7 +25,7 @@ v0.4.1 fix(post-v0.4-research-diagnosis.md):
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, wait
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -171,7 +171,7 @@ class ResearchRunner:
             fallback_used=fallback_used,
             total_chars=total_chars,
             backend_chain=backend_chain,
-            generated_at=datetime.now(),
+            generated_at=datetime.now(timezone.utc),
         )
 
         # 10. 落盘报告
@@ -330,7 +330,7 @@ class ResearchRunner:
         """
         result = backend.search(query)
         if not isinstance(result, list):
-            raise RuntimeError(
+            raise TypeError(
                 f"backend {backend.name} 返回非 list: {type(result).__name__}"
             )
         return result

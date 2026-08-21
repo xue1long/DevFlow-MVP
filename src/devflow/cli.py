@@ -578,6 +578,14 @@ def research(
         })
         raise typer.Exit(code=1)
 
+    # v0.4.1 校验: spec_id 必须存在(避免静默失败)
+    if storage.read_spec(target_spec_id) is None:
+        _output({
+            "ok": False,
+            "message": f"Spec '{target_spec_id}' 不存在",
+        })
+        raise typer.Exit(code=1)
+
     # 解析 sources(命令行覆盖 SOP 默认)
     from .model.research import SourceType as ST
     try:

@@ -620,3 +620,29 @@ class TestPathAndSummary:
             runner.run("test2", spec_id="20260819-test")
         spec_data = storage.read_spec("20260819-test")
         assert len(spec_data["research_refs"]) == 2
+
+    def test_backend_non_list_return_raises_type_error(self, tmp_path):
+        """v0.4.1: backend 返回非 list 应抛 TypeError (TRY004 ruff)"""
+        class WeirdBackend:
+            name = "weird"
+            source_type = SourceType.WEB
+
+            def search(self, query):
+                return "not a list"  # 违反协议
+
+            def health_check(self):
+                return True
+
+        backends = [WeirdBackend()]
+        with patch(
+            "devflow.engine.research_runner.select_backends",
+            return_value=backends,
+        ):
+            runner, _, _ = _make_runner(tmp_path, backends)
+            result = runner.run("test", spec_id="20260819-test")
+
+        # runner 兜底: 非 list 被 _safe_search 转 TypeError,
+        # 计入 backends_failed, 不阻断流程
+        assert result["ok"] is True
+        assert result["citations_count"] == 0
+        assert "weird" in result["backends_failed"]

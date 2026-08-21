@@ -121,13 +121,14 @@ class TestResearchCommand:
         assert kwargs["query"] == "test query"
 
     def test_research_explicit_spec(self, runner, workspace):
-        """--spec-id 显式覆盖"""
+        """--spec-id 显式覆盖(必须存在的 spec)"""
         mock_result = {"ok": True, "report_path": "x", "citations_count": 0,
                        "sources_used": [], "sources_failed": [],
                        "fallback_used": False, "message": "ok", "citations": []}
         with patch("devflow.cli._run_research", return_value=mock_result):
             result = runner.invoke(app, [
-                "research", "test", "--spec-id", "other-spec",
+                # 使用已存在的 spec_id (fixture 创建了 20260819-test)
+                "research", "test", "--spec-id", "20260819-test",
             ])
         assert result.exit_code == 0
 
@@ -147,6 +148,16 @@ sop:
         # 输出 JSON 含 ok=False
         assert '"ok": false' in result.stdout.lower() or '"ok": False' in result.stdout
         assert "未指定 spec_id" in result.stdout
+
+    def test_research_spec_id_not_found(self, runner, workspace):
+        """v0.4.1: --spec-id 不存在 -> ok=False (不静默失败)"""
+        result = runner.invoke(app, [
+            "research", "test", "--spec-id", "nonexistent-spec",
+        ])
+        assert result.exit_code == 1
+        assert '"ok": false' in result.stdout.lower() or '"ok": False' in result.stdout
+        assert "nonexistent-spec" in result.stdout
+        assert "不存在" in result.stdout
 
     def test_research_invalid_source(self, runner, workspace):
         """无效的 source 值 → ok=False"""
